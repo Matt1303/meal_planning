@@ -1,0 +1,79 @@
+services:
+  base:
+    build:
+      context: .
+      dockerfile: Dockerfile.base
+    image: mealplanning-base
+    # Use a dummy command so this container doesn't run anything.
+    command: ["true"]
+    
+  postgres:
+    image: postgres:latest
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=meal_planning
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      - pgdata:/var/lib/postgresql/data:rw
+    ports:
+      - "5432:5432"
+    networks:
+      - pg-network
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@admin.com
+      - PGADMIN_DEFAULT_PASSWORD=root
+    volumes:
+      - ./data_pgadmin:/var/lib/pgadmin      
+    ports:
+      - "8080:80"
+    depends_on:
+      - postgres
+    networks:
+      - pg-network      
+
+  meal_ingest:
+    build:
+      context: .
+      dockerfile: Dockerfile_meal_ingest
+    depends_on:
+      - postgres
+      - base  # ensure the base image is built first
+    environment:
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=meal_planning
+      - TABLE_NAME=recipes
+      - REPO_URL=https://github.com/Matt1303/recipe_html_pages
+      - CLONE_DIR=/app/clone_dir
+    networks:
+      - pg-network
+
+  # data_processor:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile_data_processor      
+  #   depends_on:
+  #     - postgres
+  #     - base  # ensure the base image is built first
+  #   environment:
+  #     - DB_USER=postgres
+  #     - DB_PASSWORD=postgres
+  #     - DB_HOST=postgres
+  #     - DB_PORT=5432
+  #     - DB_NAME=meal_planning
+  #     - TABLE_NAME=recipes
+  #     - SCHEMA_NAME=meal_planning
+  #     - OPENAI_API_KEY=${OPENAI_API_KEY}  # Make sure to export this in your environment
+  #   networks:
+  #     - pg-network
+
+volumes:
+  pgdata:
+networks:
+  pg-network:

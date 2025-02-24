@@ -1,0 +1,39 @@
+services:
+  pgdatabase:
+    image: postgres:13
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=root
+      - POSTGRES_DB=meal_planning
+    volumes:
+      - pgdata:/var/lib/postgresql/data:rw
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - pg-network
+
+  meal_ingest:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      - pgdatabase
+    environment:
+      - DB_USER=postgres
+      - DB_PASSWORD=root
+      - DB_HOST=pgdatabase
+      - DB_PORT=5432
+      - DB_NAME=meal_planning
+      - TABLE_NAME=recipes
+      - REPO_URL=https://github.com/Matt1303/recipe_html_pages
+      - CLONE_DIR=/app/clone_dir
+    networks:
+      - pg-network
+
+networks:
+  pg-network:
+    driver: bridge
+
+volumes:
+  pgdata:

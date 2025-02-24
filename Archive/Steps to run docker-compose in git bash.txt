@@ -1,0 +1,46 @@
+
+msmith@LT-MS-04837 MINGW64 ~
+$ cd DEZoomcamp/meal_planning
+
+msmith@LT-MS-04837 MINGW64 ~/DEZoomcamp/meal_planning
+$ docker-compose -f docker-compose_meal_planning.yaml up
+[+] Running 3/0
+ ✔ Container meal_planning_data_sources-pgadmin-1      Created                                                     0.0s
+ ✔ Container meal_planning_data_sources-pgdatabase-1   Crea...                                                     0.0s
+ ✔ Container meal_planning_data_sources-meal_ingest-1  Cre...                                                      0.0s
+Attaching to meal_ingest-1, pgadmin-1, pgdatabase-1
+pgdatabase-1   |
+pgdatabase-1   | PostgreSQL Database directory appears to contain a database; Skipping initialization
+pgdatabase-1   |
+pgdatabase-1   | 2024-11-01 17:19:52.314 UTC [1] LOG:  starting PostgreSQL 13.16 (Debian 13.16-1.pgdg120+1) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14) 12.2.0, 64-bit
+pgdatabase-1   | 2024-11-01 17:19:52.314 UTC [1] LOG:  listening on IPv4 address "0.0.0.0", port 5432
+pgdatabase-1   | 2024-11-01 17:19:52.314 UTC [1] LOG:  listening on IPv6 address "::", port 5432
+pgdatabase-1   | 2024-11-01 17:19:52.322 UTC [1] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+pgdatabase-1   | 2024-11-01 17:19:52.334 UTC [27] LOG:  database system was shut down at 2024-11-01 17:15:09 UTC
+pgdatabase-1   | 2024-11-01 17:19:52.344 UTC [1] LOG:  database system is ready to accept connections
+pgadmin-1      | postfix/postlog: starting the Postfix mail system
+meal_ingest-1  | Removing existing directory: /app/clone_dir
+meal_ingest-1  | Cloning repository https://github.com/Matt1303/recipe_html_pages into /app/clone_dir
+meal_ingest-1  | Repository cloned into /app/clone_dir
+meal_ingest-1  |                                     Title  ...                Categories
+meal_ingest-1  | 0                      Muhammara Sandwich  ...    Fibre Fuelled, Lunches
+meal_ingest-1  | 1                         The Green Drink  ...     Drinks, Fibre Fuelled
+meal_ingest-1  | 2                   Wild Biome Super Soup  ...    Fibre Fuelled, Lunches
+meal_ingest-1  | 3                Zesty Lemon Chia Pudding  ...   Desserts, Fibre Fuelled
+meal_ingest-1  | 4  Chocolate Peanut Butter Super Smoothie  ...  Fibre Fuelled, Smoothies
+meal_ingest-1  |
+meal_ingest-1  | [5 rows x 3 columns]
+meal_ingest-1  | Table 'recipes' created successfully in database 'meal_planning'
+meal_ingest-1 exited with code 0
+pgadmin-1      | [2024-11-01 17:19:59 +0000] [1] [INFO] Starting gunicorn 22.0.0
+pgadmin-1      | [2024-11-01 17:19:59 +0000] [1] [INFO] Listening at: http://[::]:80 (1)
+pgadmin-1      | [2024-11-01 17:19:59 +0000] [1] [INFO] Using worker: gthread
+pgadmin-1      | [2024-11-01 17:19:59 +0000] [83] [INFO] Booting worker with pid: 83
+
+
+ONCE RUN, OPEN LOCALHOST:8080 (admin@admin.com, root)
+
+THIS STEP IS NOW AUTOMATED BY MOUNTING A VOLUME TO PERSIST PGADMIN DATA IN THE .yaml FILE: 
+"REGISTER A NEW SERVER (NAME= pgdatabase, maintenance database=postgres,  username=postgres and password=root)"
+
+THEN DRILL DOWN TO CHECK THAT THE recipes TABLE EXISTS IN THE meal_planning DATABASE

@@ -1,0 +1,16 @@
+FROM python:3.12.4
+
+# Update package lists (if needed) and install system-level dependencies
+RUN apt-get update
+
+# Set the working directory
+WORKDIR /app
+
+# Copy the requirements file into the image
+COPY requirements_common.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements_common.txt
+
+# Now build this base image and tag it. For example, in your terminal run:
+# docker build -f Dockerfile.base -t mealplanning-base .

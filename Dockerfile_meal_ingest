@@ -1,0 +1,11 @@
+# need to have built and tagged the base image: docker build -f Dockerfile.base -t mealplanning-base .
+FROM mealplanning-base
+
+# Set the working directory (if not already set in the base image)
+WORKDIR /app
+
+# Copy the ingestion script and any other needed files
+COPY ingest_data.py .
+
+# Set the entrypoint for the meal_ingest service
+ENTRYPOINT [ "python", "ingest_data.py"]

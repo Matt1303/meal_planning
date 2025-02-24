@@ -1,0 +1,12 @@
+FROM mealplanning-base
+
+# Set the working directory (if not already set in the base image)
+WORKDIR /app
+
+# Copy the service-specific code
+COPY data_processor.py .
+COPY requirements_data_processor.txt .
+RUN pip install --no-cache-dir -r requirements_data_processor.txt
+
+# Set the container’s entrypoint to run your script
+ENTRYPOINT [ "python", "data_processor.py" ]
