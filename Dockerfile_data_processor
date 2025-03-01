@@ -7,6 +7,7 @@ WORKDIR /app
 COPY data_processor.py .
 COPY requirements_data_processor.txt .
 COPY food_list.txt .
+COPY prompts.py .
 
 RUN pip install --no-cache-dir -r requirements_data_processor.txt
 
