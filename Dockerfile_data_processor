@@ -6,6 +6,8 @@ WORKDIR /app
 # Copy the service-specific code
 COPY data_processor.py .
 COPY requirements_data_processor.txt .
+COPY food_list.txt .
+
 RUN pip install --no-cache-dir -r requirements_data_processor.txt
 
 # Set the container’s entrypoint to run your script
