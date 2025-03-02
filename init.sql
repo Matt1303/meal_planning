@@ -18,6 +18,7 @@ BEGIN
 END
 $$;
 
+
 -- Connect to the meal_planning database
 \c meal_planning;
 
@@ -36,13 +37,12 @@ CREATE TABLE IF NOT EXISTS meal_planning.recipes (
     lastmodifieddate timestamp with time zone DEFAULT (now() AT TIME ZONE 'gmt')
 );
 
-CREATE TABLE IF NOT EXISTS meal_planning.ingredients (
+-- Create the processed_recipes table if it does not exist
+CREATE TABLE IF NOT EXISTS meal_planning.processed_recipes (
     id serial PRIMARY KEY,
-    title text NOT NULL UNIQUE,
-    ingredients text,
-    categories text,
-    rating int,
-    servings text,
-    difficulty text,
-    lastmodifieddate timestamp with time zone DEFAULT (now() AT TIME ZONE 'gmt')
+    title text NOT NULL,
+    ingredient text NOT NULL,
+    serving_quantity text,
+    category text,
+    UNIQUE (title, ingredient)
 );
