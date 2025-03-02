@@ -6,15 +6,19 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.exc import OperationalError
 from openai import OpenAI
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 import psycopg2
 from psycopg2.extras import execute_values
 from prompts import INSTRUCTIONS, OUTPUT_FORMAT
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-LAST_MODIFIED_DATE = os.getenv("LAST_MODIFIED_DATE")
-NUM_RECIPES = os.getenv("NUM_RECIPES")
+LAST_MODIFIED_DATE ='2025-01-29'
+# LAST_MODIFIED_DATE = datetime.strptime(LAST_MODIFIED_DATE_STR, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+NUM_RECIPES=10
+
+# LAST_MODIFIED_DATE = os.getenv("LAST_MODIFIED_DATE")
+# NUM_RECIPES = os.getenv("NUM_RECIPES")
 
 
 def get_food_list():
@@ -91,7 +95,7 @@ class RecipeProcessor:
         results = []
 
         # Convert the input last_modified_date to a datetime object
-        last_modified_date = datetime.strptime(last_modified_date, '%Y-%m-%d')
+        last_modified_date = datetime.strptime(last_modified_date, '%Y-%m-%d').replace(tzinfo=timezone.utc)
 
         # Determine the number of recipes to process
         if num_recipes is None:
@@ -103,7 +107,7 @@ class RecipeProcessor:
             recipe = self.recipes_df.iloc[i].to_dict()
 
             # Filter recipes based on the last modified date
-            recipe_last_modified_date = recipe['LastModifiedDate']
+            recipe_last_modified_date = recipe['lastmodifieddate']
             if isinstance(recipe_last_modified_date, pd.Timestamp):
                 recipe_last_modified_date = recipe_last_modified_date.to_pydatetime()
             if recipe_last_modified_date > last_modified_date:
@@ -117,27 +121,24 @@ class RecipeProcessor:
 
     def flatten_results(self, results):
         # Flatten the JSON structure and create a DataFrame
-        df = pd.concat([json_normalize(result, 'Ingredients', ['Title']) for result in results], ignore_index=True)
+        df = pd.concat([json_normalize(result, 'ingredients', ['title']) for result in results], ignore_index=True)
         return df
     
 
+
 class DatabaseManager:
     def __init__(self):
-        # Retrieve connection details from environment variables.
         self.user = os.getenv('DB_USER', 'postgres')
         self.password = os.getenv('DB_PASSWORD', 'postgres')
         self.host = os.getenv('DB_HOST', 'postgres')
         self.port = os.getenv('DB_PORT', '5432')
         self.db = os.getenv('DB_NAME', 'meal_planning')
-        
-        # Create SQLAlchemy engine.
         self.engine = create_engine(f'postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.db}')
 
     def wait_for_db(self, retries=10, delay=3):
-        """Wait for the database to be ready by attempting to connect."""
         for i in range(retries):
             try:
-                with self.engine.connect() as connection:
+                with self.engine.connect() as conn:
                     print("Database connection established.")
                 return True
             except OperationalError as e:
@@ -146,84 +147,58 @@ class DatabaseManager:
         return False
 
     def get_recipes_from_db(self, schema, table):
-        """
-        Retrieves all rows from the specified schema.table and returns a DataFrame.
-        """
         if not self.wait_for_db():
             raise Exception("Database is not ready after multiple attempts.")
-        
         query = f"SELECT * FROM {schema}.{table}"
         recipes_df = pd.read_sql(query, self.engine)
         return recipes_df
-    
+
     def table_exists(self, table_name, schema='meal_planning'):
         query = f"""
         SELECT EXISTS (
             SELECT FROM information_schema.tables 
             WHERE table_schema = '{schema}' 
-            AND table_name = '{table_name}'
+              AND table_name = '{table_name}'
         );
         """
         with self.engine.connect() as conn:
             exists = conn.execute(text(query)).scalar()
         return exists
 
-    def get_table_columns(self, table_name, schema='meal_planning'):
-        query = f"""
-        SELECT column_name
-        FROM information_schema.columns
-        WHERE table_schema = '{schema}'
-        AND table_name = '{table_name}';
+    def write_to_db(self, table_name, df, schema='meal_planning', unique_constraint_columns=None):
         """
-        with self.engine.connect() as conn:
-            result = conn.execute(text(query)).fetchall()
-        return [row[0] for row in result]
-
-    def create_table(self, table_name, df, schema='meal_planning'):
-        # Normalize column names.
-        df.columns = [col.strip() for col in df.columns]
-        
-        # Create table using pandas to_sql (empty table based on the DataFrame structure).
-        df.head(0).to_sql(name=table_name, con=self.engine, if_exists='replace', index=False, schema=schema)
-        print(f"Table '{schema}.{table_name}' created successfully in database '{self.db}'")
-        
-        # # Optionally, add a unique constraint on "Title" (adjust as necessary).
-        # with self.engine.connect() as conn:
-        #     add_constraint_query = f"""
-        #     ALTER TABLE {schema}.{table_name}
-        #     ADD CONSTRAINT {table_name}_title_unique UNIQUE ("Title");
-        #     """
-        #     conn.execute(text(add_constraint_query))
-        #     print(f"Unique constraint added to the 'Title' column in table '{schema}.{table_name}'")
-
-    def write_to_db(self, table_name, df, schema='meal_planning'):
+        Upserts the DataFrame into the specified table.
+        Assumes that the table already exists (as created by init.sql).
+        If unique_constraint_columns is provided (list of columns), they are used in the ON CONFLICT clause.
+        """
         # Normalize column names.
         df.columns = [col.strip() for col in df.columns]
 
         if not self.table_exists(table_name, schema):
-            print(f"Table '{schema}.{table_name}' does not exist. Creating table...")
-            self.create_table(table_name, df, schema)
-        else:
-            print(f"Table '{schema}.{table_name}' already exists.")
+            print(f"Table '{schema}.{table_name}' does not exist. Please ensure it is created via init.sql or migrations.")
+            return
 
-        # Prepare column names and update clause for upsert.
+        # Prepare column names.
         columns = ', '.join([f'"{col}"' for col in df.columns])
-        update_columns = ', '.join([f'"{col}" = EXCLUDED."{col}"' for col in df.columns if col != 'Title'])
+        print(f"Columns to be upserted: {columns}")
+        if unique_constraint_columns:
+            conflict_clause = '(' + ', '.join([f'"{col}"' for col in unique_constraint_columns]) + ')'
+            update_columns = ', '.join([f'"{col}" = EXCLUDED."{col}"' for col in df.columns if col not in unique_constraint_columns])
+        else:
+            conflict_clause = '("Title")'
+            update_columns = ', '.join([f'"{col}" = EXCLUDED."{col}"' for col in df.columns if col != 'Title'])
         
         upsert_query = f"""
         INSERT INTO {schema}.{table_name} ({columns})
         VALUES %s
-        ON CONFLICT ("Title")
+        ON CONFLICT {conflict_clause}
         DO UPDATE SET {update_columns};
         """
         
         values = [tuple(x) for x in df.to_numpy()]
-        
-        # Connect using psycopg2 for bulk operations.
         conn = psycopg2.connect(f"dbname={self.db} user={self.user} password={self.password} host={self.host} port={self.port}")
         cursor = conn.cursor()
-        
-        print("Executing upsert query...")
+        print("Executing upsert query into processed_recipes table...")
         try:
             execute_values(cursor, upsert_query, values)
             conn.commit()
@@ -233,7 +208,7 @@ class DatabaseManager:
             conn.rollback()
         finally:
             cursor.close()
-            conn.close()    
+            conn.close()
 
 
 def main():
@@ -244,19 +219,21 @@ def main():
     try:
         recipes_df = db_manager.get_recipes_from_db(schema='meal_planning', table='recipes')
         # Split the Categories column on commas (if it contains comma-separated values)
-        recipes_df['Categories'] = recipes_df['Categories'].str.split(',')        
+        recipes_df['categories'] = recipes_df['categories'].str.split(',')        
         print("Fetched recipes:")
         print(recipes_df.head())
     except Exception as e:
-        print(f"Error fetching recipes from the database: {e}")        
+        print(f"Error fetching recipes from the database: {e}")
+        return        
 
     # Retrieve and process the food list.
     try:
         food_list_df = get_food_list()
-        print("Food list data:")
+        print("Fetched food list:")
         print(food_list_df.head())
     except Exception as e:
         print(f"Error reading food list: {e}")
+        return
 
     # Convert data to dictionaries as required by RecipeProcessor.
     # For example, you might want a dictionary mapping recipe titles to their Ingredients and Servings.
@@ -279,8 +256,8 @@ def main():
         df_results = processor.flatten_results(results)
         print("Processed results:")
         print(df_results)
-        # Optional: Upsert the results into another table:
-        db_manager.write_to_db('processed_recipes', df_results, schema='meal_planning')
+        # Upsert the processed results into a new table with a unique constraint on Title and Ingredient.
+        db_manager.write_to_db('processed_recipes', df_results, schema='meal_planning', unique_constraint_columns=["title", "ingredient"])
     else:
         print("No recipes processed.")
 
