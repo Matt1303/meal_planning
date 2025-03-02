@@ -26,6 +26,7 @@ services:
     environment:
       - PGADMIN_DEFAULT_EMAIL=admin@admin.com
       - PGADMIN_DEFAULT_PASSWORD=root
+      - PGADMIN_CONFIG_ENHANCED_COOKIE_SECURITY=False
     volumes:
       - ./data_pgadmin:/var/lib/pgadmin      
     ports:
@@ -54,24 +55,25 @@ services:
     networks:
       - pg-network
 
-  # data_processor:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile_data_processor      
-  #   depends_on:
-  #     - postgres
-  #     - base  # ensure the base image is built first
-  #   environment:
-  #     - DB_USER=postgres
-  #     - DB_PASSWORD=postgres
-  #     - DB_HOST=postgres
-  #     - DB_PORT=5432
-  #     - DB_NAME=meal_planning
-  #     - TABLE_NAME=recipes
-  #     - SCHEMA_NAME=meal_planning
-  #     - OPENAI_API_KEY=${OPENAI_API_KEY}  # Make sure to export this in your environment
-  #   networks:
-  #     - pg-network
+  data_processor:
+    build:
+      context: .
+      dockerfile: Dockerfile_data_processor      
+    depends_on:
+      - postgres
+      - base  # ensure the base image is built first
+    environment:
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=meal_planning
+      - TABLE_NAME=recipes
+      - SCHEMA_NAME=meal_planning
+      - OPENAI_API_KEY=${OPENAI_API_KEY}  # Make sure to export this in your environment
+      - FOOD_LIST_PATH=${FOOD_LIST_PATH}
+    networks:
+      - pg-network
 
 volumes:
   pgdata:
