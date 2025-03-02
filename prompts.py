@@ -9,27 +9,27 @@ Moreover, use the quantity of each of the ingredients you identify along with th
 # Define the output format
 OUTPUT_FORMAT = """The output should only be a JSON object in the following format, do not include any additional text or explanation of your logic.
 {
-    "Title": "Nothing Fishy Sushi Wraps",
-    "Ingredients": [
+    "title": "Nothing Fishy Sushi Wraps",
+    "ingredients": [
         {
-            "Ingredient": "cashews",
-            "ServingQuantity": "15 grams",
-            "Category": "Nuts and Seeds"
+            "ingredient": "cashews",
+            "serving_quantity": "15 grams",
+            "category": "Nuts and Seeds"
         }
     ]
 },
 {
-    "Title": "The Green Drink",
-    "Ingredients": [
+    "title": "The Green Drink",
+    "ingredients": [
         {
-            "Ingredient": "honeydew melon",
-            "ServingQuantity": "90 grams",
-            "Category": "Other Fruits"
+            "ingredient": "honeydew melon",
+            "serving_quantity": "90 grams",
+            "category": "Other Fruits"
         },
         {
-            "Ingredient": "kiwis",
-            "ServingQuantity": "1",
-            "Category": "Other Fruits"
+            "ingredient": "kiwis",
+            "serving_quantity": "1",
+            "category": "Other Fruits"
         }
     ]
 }
