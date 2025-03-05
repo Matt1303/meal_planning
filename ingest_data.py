@@ -10,6 +10,15 @@ from git import Repo, Git
 from bs4 import BeautifulSoup
 # import re
 from datetime import datetime
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,  # Use DEBUG for more detailed output
+    format='%(asctime)s %(levelname)s: %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 class RecipeExtractor:
     def __init__(self, html_dir, repo):
@@ -98,11 +107,11 @@ class RecipeExtractor:
 
 def clone_repo(repo_url, clone_dir):
     if os.path.exists(clone_dir):
-        print(f"Removing existing directory: {clone_dir}")
+        logger.info(f"Removing existing directory: {clone_dir}")
         os.system(f'rm -rf {clone_dir}')
-    print(f"Cloning repository {repo_url} into {clone_dir}")
+    logger.info(f"Cloning repository {repo_url} into {clone_dir}")
     Repo.clone_from(repo_url, clone_dir)
-    print(f"Repository cloned into {clone_dir}")
+    logger.info(f"Repository cloned into {clone_dir}")
 
 def wait_for_db(engine, retries=5, delay=5):
     for _ in range(retries):
@@ -110,7 +119,7 @@ def wait_for_db(engine, retries=5, delay=5):
             with engine.connect() as conn:
                 return True
         except OperationalError as e:
-            print(f"Database not ready, error: {str(e)}")
+            logger.error(f"Database not ready, error: {str(e)}")
             time.sleep(delay)
     return False
 
@@ -124,15 +133,8 @@ def main():
     repo_url = os.getenv('REPO_URL')
     clone_dir = os.getenv('CLONE_DIR')
 
-    # Print the database connection details
-    print(f"Connecting to database with the following details:")
-    print(f"User: {user}")
-    print(f"Password: {password}")
-    print(f"Host: {host}")
-    print(f"Port: {port}")
-    print(f"Database: {db}")
-
     # Clone the GitHub repository
+    logger.info(f"Cloning repository {repo_url} into {clone_dir}")
     clone_repo(repo_url, clone_dir)
 
     # Initialize RecipeExtractor with the folder containing HTML files
@@ -145,15 +147,12 @@ def main():
     # Rename the columns to match the database table
     recipes_df.columns = [col.lower() for col in recipes_df.columns]   
 
-    # Print the DataFrame to check its content
-    print(recipes_df.sort_values(by='lastmodifieddate').tail())     
-
     # Create a connection to the PostgreSQL database
     engine = create_engine(f'postgresql://{user}:{password}@{host}:{port}/{db}')
 
     # Wait for the database to be ready
     if not wait_for_db(engine):
-        print("Database connection failed after retries")
+        logger.info("Database connection failed after retries")
         return
 
     # Upsert data into the database
@@ -187,7 +186,7 @@ def main():
             """)
             connection.execute(insert_query, params)
 
-    print(f"Data upserted successfully into table '{table_name}' in database '{db}'") 
+    logger.info(f"Data upserted successfully into table '{table_name}' in database '{db}'")
 
 if __name__ == '__main__':
     main()
