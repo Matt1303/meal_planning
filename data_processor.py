@@ -9,16 +9,17 @@ import json
 from datetime import datetime, timezone
 import psycopg2
 from psycopg2.extras import execute_values
+import logging
 from prompts import INSTRUCTIONS, OUTPUT_FORMAT
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-LAST_MODIFIED_DATE ='2025-01-29'
-# LAST_MODIFIED_DATE = datetime.strptime(LAST_MODIFIED_DATE_STR, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-NUM_RECIPES=10
-
-# LAST_MODIFIED_DATE = os.getenv("LAST_MODIFIED_DATE")
-# NUM_RECIPES = os.getenv("NUM_RECIPES")
+logging.basicConfig(
+    level=logging.INFO,  # Change to DEBUG for more verbose output
+    format='%(asctime)s %(levelname)s: %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 
 def get_food_list():
@@ -67,7 +68,7 @@ class RecipeProcessor:
             )
             return response.choices[0].message.content
         except Exception as e:
-            print(f"Error getting response from OpenAI: {e}")
+            logger.error(f"Error getting response from OpenAI: {e}")
             return None    
 
     def process_recipe(self, recipe):
@@ -85,8 +86,8 @@ class RecipeProcessor:
         try:
             json_object = json.loads(response)
         except json.JSONDecodeError as e:
-            print("Error parsing JSON from OpenAI response:", e)
-            print("Response was:", response)
+            logger.error("Error parsing JSON from OpenAI response:", e)
+            logger.error("Response was:", response)
             json_object = None
 
         return json_object
@@ -139,10 +140,10 @@ class DatabaseManager:
         for i in range(retries):
             try:
                 with self.engine.connect() as conn:
-                    print("Database connection established.")
+                    logger.info("Database connection established.")
                 return True
             except OperationalError as e:
-                print(f"Database not ready ({i+1}/{retries}), retrying in {delay} seconds...")
+                logger.info(f"Database not ready ({i+1}/{retries}), retrying in {delay} seconds...")
                 time.sleep(delay)
         return False
 
@@ -175,12 +176,12 @@ class DatabaseManager:
         df.columns = [col.strip() for col in df.columns]
 
         if not self.table_exists(table_name, schema):
-            print(f"Table '{schema}.{table_name}' does not exist. Please ensure it is created via init.sql or migrations.")
+            logger.info(f"Table '{schema}.{table_name}' does not exist. Please ensure it is created via init.sql.")
             return
 
         # Prepare column names.
         columns = ', '.join([f'"{col}"' for col in df.columns])
-        print(f"Columns to be upserted: {columns}")
+        logger.info(f"Columns to be upserted: {columns}")
         if unique_constraint_columns:
             conflict_clause = '(' + ', '.join([f'"{col}"' for col in unique_constraint_columns]) + ')'
             update_columns = ', '.join([f'"{col}" = EXCLUDED."{col}"' for col in df.columns if col not in unique_constraint_columns])
@@ -198,13 +199,13 @@ class DatabaseManager:
         values = [tuple(x) for x in df.to_numpy()]
         conn = psycopg2.connect(f"dbname={self.db} user={self.user} password={self.password} host={self.host} port={self.port}")
         cursor = conn.cursor()
-        print("Executing upsert query into processed_recipes table...")
+        logger.info("Executing upsert query into processed_recipes table...")
         try:
             execute_values(cursor, upsert_query, values)
             conn.commit()
-            print(f"Table '{schema}.{table_name}' updated successfully in database '{self.db}'")
+            logger.info(f"Table '{schema}.{table_name}' updated successfully in database '{self.db}'")
         except Exception as e:
-            print("Error during upsert operation:", e)
+            logger.error("Error during upsert operation:", e)
             conn.rollback()
         finally:
             cursor.close()
@@ -235,9 +236,9 @@ class DatabaseManager:
             with self.engine.connect() as conn:
                 conn.execute(text(delete_query))
                 conn.commit()
-            print(f"Deleted {len(titles_to_delete)} recipes from {schema}.{processed_table} that no longer exist in {schema}.{source_table}.")
+            logger.info(f"Deleted {len(titles_to_delete)} recipes from {schema}.{processed_table} that no longer exist in {schema}.{source_table}.")
         else:
-            print("No deleted recipes to remove.")            
+            logger.info("No deleted recipes to remove.")            
 
 
 def main():
@@ -249,19 +250,17 @@ def main():
         recipes_df = db_manager.get_recipes_from_db(schema='meal_planning', table='recipes')
         # Split the Categories column on commas (if it contains comma-separated values)
         recipes_df['categories'] = recipes_df['categories'].str.split(',')        
-        print("Fetched recipes:")
-        print(recipes_df.head())
+        logger.info("Fetched recipes")
     except Exception as e:
-        print(f"Error fetching recipes from the database: {e}")
+        logger.error(f"Error fetching recipes from the database: {e}")
         return        
 
     # Retrieve and process the food list.
     try:
         food_list_df = get_food_list()
-        print("Fetched food list:")
-        print(food_list_df.head())
+        logger.info("Fetched food list")
     except Exception as e:
-        print(f"Error reading food list: {e}")
+        logger.error(f"Error reading food list: {e}")
         return
 
     # Convert data to dictionaries as required by RecipeProcessor.
@@ -279,18 +278,17 @@ def main():
     processor = RecipeProcessor(recipes_df, category_dict, INSTRUCTIONS, OUTPUT_FORMAT)   
     
     # Process recipes and flatten the results.
-    results = processor.process_all_recipes(LAST_MODIFIED_DATE, num_recipes=NUM_RECIPES)
+    results = processor.process_all_recipes(os.getenv("LAST_MODIFIED_DATE"), num_recipes=os.getenv("NUM_RECIPES"))
 
     if results:
         df_results = processor.flatten_results(results)
-        print("Processed results:")
-        print(df_results)
+        logger.info("Processed results")
         # Upsert the processed results into a new table with a unique constraint on Title and Ingredient.
         db_manager.write_to_db('processed_recipes', df_results, schema='meal_planning', unique_constraint_columns=["title", "ingredient"])
         # Now, remove processed rows for recipes that no longer exist in the source recipes table.
         db_manager.remove_deleted_recipes('processed_recipes', 'recipes', schema='meal_planning')
     else:
-        print("No recipes processed.")
+        logger.info("No recipes processed.")
 
 if __name__ == '__main__':
     main()
