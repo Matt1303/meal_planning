@@ -39,7 +39,6 @@ CREATE TABLE IF NOT EXISTS meal_planning.recipes (
 
 -- Create the processed_recipes table if it does not exist
 CREATE TABLE IF NOT EXISTS meal_planning.processed_recipes (
-    id serial PRIMARY KEY,
     title text NOT NULL,
     ingredient text NOT NULL,
     serving_quantity text,
