@@ -210,6 +210,35 @@ class DatabaseManager:
             cursor.close()
             conn.close()
 
+    def remove_deleted_recipes(self, processed_table, source_table, schema='meal_planning'):
+        """
+        Removes rows from the processed_table if their Title is not present in the source_table.
+        This synchronizes the processed data with the current source recipes.
+        """
+        # Get the set of titles from the source recipes table.
+        source_query = f"SELECT title FROM {schema}.{source_table}"
+        with self.engine.connect() as conn:
+            source_titles = {row[0] for row in conn.execute(text(source_query)).fetchall()}
+        
+        # Get the set of titles from the processed_recipes table.
+        processed_query = f"SELECT DISTINCT title FROM {schema}.{processed_table}"
+        with self.engine.connect() as conn:
+            processed_titles = {row[0] for row in conn.execute(text(processed_query)).fetchall()}
+        
+        # Determine which titles exist in processed_table but not in source_titles.
+        titles_to_delete = processed_titles - source_titles
+        
+        if titles_to_delete:
+            # Build the DELETE query using the list of titles.
+            placeholders = ", ".join([f"'{title}'" for title in titles_to_delete])
+            delete_query = f"DELETE FROM {schema}.{processed_table} WHERE title IN ({placeholders})"
+            with self.engine.connect() as conn:
+                conn.execute(text(delete_query))
+                conn.commit()
+            print(f"Deleted {len(titles_to_delete)} recipes from {schema}.{processed_table} that no longer exist in {schema}.{source_table}.")
+        else:
+            print("No deleted recipes to remove.")            
+
 
 def main():
     # Instantiate the DatabaseManager; it will pick up connection info from environment variables.
@@ -258,6 +287,8 @@ def main():
         print(df_results)
         # Upsert the processed results into a new table with a unique constraint on Title and Ingredient.
         db_manager.write_to_db('processed_recipes', df_results, schema='meal_planning', unique_constraint_columns=["title", "ingredient"])
+        # Now, remove processed rows for recipes that no longer exist in the source recipes table.
+        db_manager.remove_deleted_recipes('processed_recipes', 'recipes', schema='meal_planning')
     else:
         print("No recipes processed.")
 
