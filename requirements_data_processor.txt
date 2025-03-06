@@ -1,3 +1,2 @@
 -r requirements_common.txt
-openai==1.59.3
-pyomo==6.8.2
+openai==1.65.3
