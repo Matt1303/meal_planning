@@ -43,5 +43,6 @@ CREATE TABLE IF NOT EXISTS meal_planning.processed_recipes (
     ingredient text NOT NULL,
     serving_quantity text,
     category text,
+    lastmodifieddate timestamp with time zone,
     UNIQUE (title, ingredient)
 );
