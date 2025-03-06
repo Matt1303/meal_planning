@@ -6,21 +6,53 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.exc import OperationalError
 from openai import OpenAI
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import psycopg2
 from psycopg2.extras import execute_values
 import logging
 from prompts import INSTRUCTIONS, OUTPUT_FORMAT
 
+# Initialize OpenAI client using API key from environment variables.
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+# Configure logging.
 logging.basicConfig(
-    level=logging.INFO,  # Change to DEBUG for more verbose output
+    level=logging.INFO,  # Use DEBUG for more detailed output.
     format='%(asctime)s %(levelname)s: %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 logger = logging.getLogger(__name__)
 
+# --- Environment Variables with Defaults ---
+default_date = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d")
+LAST_MODIFIED_DATE = os.getenv("LAST_MODIFIED_DATE", default_date)
+
+if LAST_MODIFIED_DATE == "":
+    LAST_MODIFIED_DATE = default_date
+
+logger.info("LAST_MODIFIED_DATE: %s", LAST_MODIFIED_DATE)
+
+NUM_RECIPES = os.getenv("NUM_RECIPES")
+if NUM_RECIPES is not None and NUM_RECIPES != "":
+    try:
+        NUM_RECIPES = int(NUM_RECIPES)
+    except ValueError:
+        logger.info("If defining, NUM_RECIPES environment variable must be an integer.")
+        NUM_RECIPES = None
+else:
+    NUM_RECIPES = None
+
+if NUM_RECIPES is None:
+    logger.info("NUM_RECIPES: %s - all valid recipes will be processed", NUM_RECIPES)
+else:
+    logger.info("NUM_RECIPES: %s - only the first %d valid recipes will be processed", NUM_RECIPES, NUM_RECIPES)
+
+# Flag to indicate whether to force re‑processing of recipes even if already processed.
+FORCE_UPDATE_PROCESSED = os.getenv("FORCE_UPDATE_PROCESSED", "True").lower() in ["true", "1", "yes"]
+if FORCE_UPDATE_PROCESSED:
+    logger.info("FORCE_UPDATE_PROCESSED: %s - any recipes updated on or after LAST_MODIFIED_DATE will be updated in processed_recipes postgres table", FORCE_UPDATE_PROCESSED)
+else:
+    logger.info("FORCE_UPDATE_PROCESSED: %s - only recipes not already processed will be added to processed_recipes postgres table", FORCE_UPDATE_PROCESSED)
 
 def get_food_list():
     """
@@ -54,7 +86,7 @@ def get_food_list():
 
 class RecipeProcessor:
     def __init__(self, recipes_df, category_dict, instructions, output_format):
-        self.recipes_df = recipes_df
+        self.recipes_df = recipes_df.sort_values(by='lastmodifieddate', ascending=True)
         self.category_dict = category_dict
         self.instructions = instructions
         self.output_format = output_format
@@ -68,7 +100,7 @@ class RecipeProcessor:
             )
             return response.choices[0].message.content
         except Exception as e:
-            logger.error(f"Error getting response from OpenAI: {e}")
+            logger.error("Error getting response from OpenAI: %s", e)
             return None    
 
     def process_recipe(self, recipe):
@@ -79,52 +111,76 @@ class RecipeProcessor:
         if response is None:
             raise ValueError("No response received from OpenAI.")
 
-        # Remove markdown delimiters if present
         if response.startswith('```json'):
             response = response[7:-3].strip()
 
         try:
             json_object = json.loads(response)
         except json.JSONDecodeError as e:
-            logger.error("Error parsing JSON from OpenAI response:", e)
-            logger.error("Response was:", response)
+            logger.error("Error parsing JSON from OpenAI response: %s", e)
+            logger.error("Response was: %s", response)
             json_object = None
 
         return json_object
     
-    def process_all_recipes(self, last_modified_date, num_recipes=None):
+    def process_all_recipes(self, last_modified_date, num_recipes=None, existing_titles=None):
         results = []
-
-        # Convert the input last_modified_date to a datetime object
-        last_modified_date = datetime.strptime(last_modified_date, '%Y-%m-%d').replace(tzinfo=timezone.utc)
-
-        # Determine the number of recipes to process
+        
+        # Convert last_modified_date to datetime if needed.
+        if isinstance(last_modified_date, str):
+            last_modified_date = datetime.strptime(last_modified_date, '%Y-%m-%d').replace(tzinfo=timezone.utc)
+        
+        logger.info("Using last modified date cutoff: %s", last_modified_date)
+        
         if num_recipes is None:
             num_recipes = len(self.recipes_df)
-
-        # Loop through each row in the DataFrame
+        
         for i in range(num_recipes):
-            # Extract the row as a dictionary
             recipe = self.recipes_df.iloc[i].to_dict()
-
-            # Filter recipes based on the last modified date
             recipe_last_modified_date = recipe['lastmodifieddate']
             if isinstance(recipe_last_modified_date, pd.Timestamp):
                 recipe_last_modified_date = recipe_last_modified_date.to_pydatetime()
+            
+            recipe_title = recipe.get('title', 'Unknown')
+            # logger.info("Recipe '%s' last modified on %s", recipe_title, recipe_last_modified_date)
+            
+            # Skip if already processed and not forcing update.
+            if existing_titles is not None and recipe_title in existing_titles:
+                logger.info("Skipping recipe '%s' as it is already processed.", recipe_title)
+                continue
+            
             if recipe_last_modified_date > last_modified_date:
-                # Process the recipe
-                json_object = self.process_recipe(recipe)
-
-                # Append the JSON object to the results list
+                logger.info("Processing recipe '%s'", recipe_title)
+                try:
+                    json_object = self.process_recipe(recipe)
+                    # Manually attach lastmodifieddate from the source recipe.
+                    json_object['lastmodifieddate'] = recipe_last_modified_date.isoformat()
+                except Exception as e:
+                    logger.error("Error processing recipe '%s': %s", recipe_title, e)
+                    continue
                 results.append(json_object)
-
+            else:
+                logger.info("Skipping recipe '%s' (last modified before cutoff)", recipe_title)
+        
         return results
 
     def flatten_results(self, results):
-        # Flatten the JSON structure and create a DataFrame
-        df = pd.concat([json_normalize(result, 'ingredients', ['title']) for result in results], ignore_index=True)
-        return df
-    
+        dfs = []
+        for result in results:
+            # Always include the title.
+            meta = ['title']
+            # Only include 'lastmodifieddate' if present.
+            if 'lastmodifieddate' in result:
+                meta.append('lastmodifieddate')
+            try:
+                df = json_normalize(result, record_path='ingredients', meta=meta, errors='ignore')
+                dfs.append(df)
+            except Exception as e:
+                logger.error("Error flattening result for recipe '%s': %s", result.get('title', 'Unknown'), e)
+        if dfs:
+            return pd.concat(dfs, ignore_index=True)
+        else:
+            return pd.DataFrame()
 
 
 class DatabaseManager:
@@ -143,7 +199,7 @@ class DatabaseManager:
                     logger.info("Database connection established.")
                 return True
             except OperationalError as e:
-                logger.info(f"Database not ready ({i+1}/{retries}), retrying in {delay} seconds...")
+                logger.info("Database not ready (%d/%d), retrying in %d seconds...", i+1, retries, delay)
                 time.sleep(delay)
         return False
 
@@ -153,6 +209,12 @@ class DatabaseManager:
         query = f"SELECT * FROM {schema}.{table}"
         recipes_df = pd.read_sql(query, self.engine)
         return recipes_df
+
+    def get_processed_recipe_titles(self, schema='meal_planning', table='processed_recipes'):
+        query = f"SELECT DISTINCT title FROM {schema}.{table}"
+        with self.engine.connect() as conn:
+            rows = conn.execute(text(query)).fetchall()
+        return {row[0] for row in rows}
 
     def table_exists(self, table_name, schema='meal_planning'):
         query = f"""
@@ -167,21 +229,13 @@ class DatabaseManager:
         return exists
 
     def write_to_db(self, table_name, df, schema='meal_planning', unique_constraint_columns=None):
-        """
-        Upserts the DataFrame into the specified table.
-        Assumes that the table already exists (as created by init.sql).
-        If unique_constraint_columns is provided (list of columns), they are used in the ON CONFLICT clause.
-        """
-        # Normalize column names.
         df.columns = [col.strip() for col in df.columns]
-
         if not self.table_exists(table_name, schema):
-            logger.info(f"Table '{schema}.{table_name}' does not exist. Please ensure it is created via init.sql.")
+            logger.info("Table '%s.%s' does not exist. Please ensure it is created via init.sql or migrations.", schema, table_name)
             return
 
-        # Prepare column names.
         columns = ', '.join([f'"{col}"' for col in df.columns])
-        logger.info(f"Columns to be upserted: {columns}")
+        logger.info("Columns to be upserted: %s", columns)
         if unique_constraint_columns:
             conflict_clause = '(' + ', '.join([f'"{col}"' for col in unique_constraint_columns]) + ')'
             update_columns = ', '.join([f'"{col}" = EXCLUDED."{col}"' for col in df.columns if col not in unique_constraint_columns])
@@ -203,92 +257,93 @@ class DatabaseManager:
         try:
             execute_values(cursor, upsert_query, values)
             conn.commit()
-            logger.info(f"Table '{schema}.{table_name}' updated successfully in database '{self.db}'")
+            logger.info("Table '%s.%s' updated successfully in database '%s'", schema, table_name, self.db)
         except Exception as e:
-            logger.error("Error during upsert operation:", e)
+            logger.error("Error during upsert operation: %s", e)
             conn.rollback()
         finally:
             cursor.close()
             conn.close()
 
     def remove_deleted_recipes(self, processed_table, source_table, schema='meal_planning'):
-        """
-        Removes rows from the processed_table if their Title is not present in the source_table.
-        This synchronizes the processed data with the current source recipes.
-        """
-        # Get the set of titles from the source recipes table.
         source_query = f"SELECT title FROM {schema}.{source_table}"
         with self.engine.connect() as conn:
             source_titles = {row[0] for row in conn.execute(text(source_query)).fetchall()}
         
-        # Get the set of titles from the processed_recipes table.
         processed_query = f"SELECT DISTINCT title FROM {schema}.{processed_table}"
         with self.engine.connect() as conn:
             processed_titles = {row[0] for row in conn.execute(text(processed_query)).fetchall()}
         
-        # Determine which titles exist in processed_table but not in source_titles.
         titles_to_delete = processed_titles - source_titles
         
         if titles_to_delete:
-            # Build the DELETE query using the list of titles.
             placeholders = ", ".join([f"'{title}'" for title in titles_to_delete])
             delete_query = f"DELETE FROM {schema}.{processed_table} WHERE title IN ({placeholders})"
             with self.engine.connect() as conn:
                 conn.execute(text(delete_query))
                 conn.commit()
-            logger.info(f"Deleted {len(titles_to_delete)} recipes from {schema}.{processed_table} that no longer exist in {schema}.{source_table}.")
+            logger.info("Deleted %d recipes from %s.%s that no longer exist in %s.%s.", len(titles_to_delete), schema, processed_table, schema, source_table)
         else:
-            logger.info("No deleted recipes to remove.")            
+            logger.info("No deleted recipes to remove.")
 
 
 def main():
-    # Instantiate the DatabaseManager; it will pick up connection info from environment variables.
     db_manager = DatabaseManager()
 
-    # Retrieve recipes from the 'meal_planning' schema and 'recipes' table.
     try:
         recipes_df = db_manager.get_recipes_from_db(schema='meal_planning', table='recipes')
-        # Split the Categories column on commas (if it contains comma-separated values)
-        recipes_df['categories'] = recipes_df['categories'].str.split(',')        
-        logger.info("Fetched recipes")
+        recipes_df['categories'] = recipes_df['categories'].str.split(',')
+        logger.info("Fetched recipes from recipes table.")
     except Exception as e:
-        logger.error(f"Error fetching recipes from the database: {e}")
-        return        
-
-    # Retrieve and process the food list.
-    try:
-        food_list_df = get_food_list()
-        logger.info("Fetched food list")
-    except Exception as e:
-        logger.error(f"Error reading food list: {e}")
+        logger.error("Error fetching recipes from the database: %s", e)
         return
 
-    # Convert data to dictionaries as required by RecipeProcessor.
-    # For example, you might want a dictionary mapping recipe titles to their Ingredients and Servings.
-    # Here, we'll assume that recipes_df has columns 'Title', 'Ingredients', and 'Servings'.
-    
-    # You can create a dictionary like this:
-    # ingredients_dict = recipes_df.set_index('Title')[['Ingredients', 'Servings']].to_dict('index')
-    
-    # Similarly, convert your food list DataFrame to a dictionary.
-    # Suppose your food list DataFrame has columns 'Item' and 'Category'.
+    try:
+        food_list_df = get_food_list()
+        logger.info("Fetched food list from static text file.")
+    except Exception as e:
+        logger.error("Error reading food list: %s", e)
+        return
+
     category_dict = food_list_df.set_index('Item')['Category'].to_dict()
+
+    processor = RecipeProcessor(recipes_df, category_dict, INSTRUCTIONS, OUTPUT_FORMAT)
     
-    # Instantiate the RecipeProcessor with your instructions and output format.
-    processor = RecipeProcessor(recipes_df, category_dict, INSTRUCTIONS, OUTPUT_FORMAT)   
+    # Convert LAST_MODIFIED_DATE from env into a timezone-aware datetime in GMT.
+    gmt = timezone(timedelta(0), "GMT")
+    last_modified_date = datetime.strptime(LAST_MODIFIED_DATE, "%Y-%m-%d").replace(tzinfo=gmt)
+    logger.info("Processing recipes modified after %s (GMT)", last_modified_date)
     
-    # Process recipes and flatten the results.
-    results = processor.process_all_recipes(os.getenv("LAST_MODIFIED_DATE"), num_recipes=os.getenv("NUM_RECIPES"))
+    # If we're not forcing an update, retrieve the set of already processed recipe titles.
+    if not FORCE_UPDATE_PROCESSED:
+        processed_titles = db_manager.get_processed_recipe_titles(schema='meal_planning', table='processed_recipes')
+        logger.info("Skipping recipes already processed: %s", processed_titles)
+    else:
+        processed_titles = None
+        logger.info("FORCE_UPDATE_PROCESSED enabled; processing all recipes with last modified date after LAST_MODIFIED_DATE.")
+    
+    results = processor.process_all_recipes(last_modified_date, num_recipes=NUM_RECIPES, existing_titles=processed_titles)
 
     if results:
         df_results = processor.flatten_results(results)
-        logger.info("Processed results")
-        # Upsert the processed results into a new table with a unique constraint on Title and Ingredient.
+        
+        # Deduplicate based on the unique key columns.
+        df_results = df_results.drop_duplicates(subset=["title", "ingredient"])
+        
+        num_recipes = df_results['title'].nunique()
+        num_ingredients = len(df_results)
+        logger.info("Total processed recipes to upsert: %d", num_recipes)
+        logger.info("Number of processed ingredients to upsert: %d", num_ingredients)        
+        
+        # Optionally, sort by lastmodifieddate for predictable upsert order.
+        df_results = df_results.sort_values(by="lastmodifieddate", ascending=True)
+        
         db_manager.write_to_db('processed_recipes', df_results, schema='meal_planning', unique_constraint_columns=["title", "ingredient"])
-        # Now, remove processed rows for recipes that no longer exist in the source recipes table.
         db_manager.remove_deleted_recipes('processed_recipes', 'recipes', schema='meal_planning')
     else:
         logger.info("No recipes processed.")
+
+
 
 if __name__ == '__main__':
     main()
