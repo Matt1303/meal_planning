@@ -312,7 +312,7 @@ def main():
     # Convert LAST_MODIFIED_DATE from env into a timezone-aware datetime in GMT.
     gmt = timezone(timedelta(0), "GMT")
     last_modified_date = datetime.strptime(LAST_MODIFIED_DATE, "%Y-%m-%d").replace(tzinfo=gmt)
-    logger.info("Processing recipes modified after %s (GMT)", last_modified_date)
+    # logger.info("Processing recipes modified after %s (GMT)", last_modified_date)
     
     # If we're not forcing an update, retrieve the set of already processed recipe titles.
     if not FORCE_UPDATE_PROCESSED:
@@ -320,7 +320,7 @@ def main():
         logger.info("Skipping recipes already processed: %s", processed_titles)
     else:
         processed_titles = None
-        logger.info("FORCE_UPDATE_PROCESSED enabled; processing all recipes with last modified date after LAST_MODIFIED_DATE.")
+        logger.info("FORCE_UPDATE_PROCESSED enabled; processing all recipes with last modified date after %s", last_modified_date)
     
     results = processor.process_all_recipes(last_modified_date, num_recipes=NUM_RECIPES, existing_titles=processed_titles)
 
