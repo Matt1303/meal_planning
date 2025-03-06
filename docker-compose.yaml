@@ -10,9 +10,9 @@ services:
   postgres:
     image: postgres:latest
     environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=meal_planning
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=${DB_NAME}
     volumes:
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
       - pgdata:/var/lib/postgresql/data:rw
@@ -44,13 +44,13 @@ services:
       - postgres
       - base  # ensure the base image is built first
     environment:
-      - DB_USER=postgres
-      - DB_PASSWORD=postgres
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_NAME=meal_planning
-      - TABLE_NAME=recipes
-      - REPO_URL=https://github.com/Matt1303/recipe_html_pages
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_NAME=${DB_NAME}
+      - TABLE_NAME=${TABLE_NAME}
+      - REPO_URL=${REPO_URL}
       - CLONE_DIR=/app/clone_dir
     networks:
       - pg-network
@@ -63,15 +63,18 @@ services:
       - postgres
       - base  # ensure the base image is built first
     environment:
-      - DB_USER=postgres
-      - DB_PASSWORD=postgres
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_NAME=meal_planning
-      - TABLE_NAME=recipes
-      - SCHEMA_NAME=meal_planning
-      - OPENAI_API_KEY=${OPENAI_API_KEY}  # Make sure to export this in your environment
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_NAME=${DB_NAME}
+      - TABLE_NAME=${TABLE_NAME}
+      - SCHEMA_NAME=${SCHEMA_NAME}
+      - LAST_MODIFIED_DATE=${LAST_MODIFIED_DATE}
+      - NUM_RECIPES=${NUM_RECIPES}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
       - FOOD_LIST_PATH=${FOOD_LIST_PATH}
+      - FORCE_UPDATE_PROCESSED=${FORCE_UPDATE_PROCESSED}
     networks:
       - pg-network
 
