@@ -61,7 +61,8 @@ services:
       dockerfile: Dockerfile_data_processor      
     depends_on:
       - postgres
-      - base  # ensure the base image is built first
+      - base
+      - meal_ingest
     environment:
       - DB_USER=${DB_USER}
       - DB_PASSWORD=${DB_PASSWORD}
@@ -85,6 +86,8 @@ services:
     depends_on:
       - postgres
       - base
+      - meal_ingest
+      - data_processor
     environment:
       - DB_USER=${DB_USER}
       - DB_PASSWORD=${DB_PASSWORD}
