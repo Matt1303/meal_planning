@@ -78,6 +78,22 @@ services:
     networks:
       - pg-network
 
+  meal_planner:
+    build:
+      context: .
+      dockerfile: Dockerfile_meal_planner
+    depends_on:
+      - postgres
+      - base
+    environment:
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_NAME=${DB_NAME}
+    networks:
+      - pg-network     
+
 volumes:
   pgdata:
 networks:

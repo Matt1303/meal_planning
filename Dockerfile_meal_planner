@@ -1,0 +1,14 @@
+FROM mealplanning-base
+
+# Set the working directory (if not already set in the base image)
+WORKDIR /app
+
+# Copy the service-specific code
+COPY meal_planner.py .
+COPY requirements_meal_planner.txt .
+COPY db_manager.py .
+
+RUN pip install --no-cache-dir -r requirements_meal_planner.txt
+
+# Set the container’s entrypoint to run your script
+ENTRYPOINT [ "python", "meal_planner.py" ]
