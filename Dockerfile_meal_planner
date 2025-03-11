@@ -9,6 +9,7 @@ COPY requirements_meal_planner.txt .
 COPY db_manager.py .
 
 RUN pip install --no-cache-dir -r requirements_meal_planner.txt
+RUN apt-get update && apt-get install -y glpk-utils
 
 # Set the container’s entrypoint to run your script
 ENTRYPOINT [ "python", "meal_planner.py" ]
