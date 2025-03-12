@@ -18,21 +18,67 @@ logging.getLogger('pyomo').setLevel(logging.WARNING)
 DAYS = list(range(1, 8))  # Days 1 through 7
 MEAL_TYPES = ['Breakfasts', 'Lunches', 'Dinner', 'Snacks'] #, 'Side Salad']
 DEFAULT_MAX_OCCURRENCE = 5
+
 # Define the daily requirements for each category.
-# Note: We have replaced "Flaxseeds" with "Flaxseeds or Linseeds".
 CATEGORY_REQUIREMENTS = {
-    'Beans': 3,
-    'Berries': 1,
-    'Other Fruits': 3,
-    'Cruciferous Vegetables': 1,
-    'Greens': 2,
+    #'Beans': 3,
+    #'Berries': 1,
+    #'Other Fruits': 3,
+    #'Cruciferous Vegetables': 1,
+    #'Greens': 2,
     'Other Vegetables': 2,
-    'Flaxseeds or Linseeds': 1,
-    'Nuts and Seeds': 1,
-    'Herbs and Spices': 1,
-    'Whole Grains': 3
+    #'Flaxseeds or Linseeds': 1,
+    #'Nuts and Seeds': 1,
+    #'Herbs and Spices': 1,
+    'Whole Grains': 2 #3
 }
 MAX_RELAXATIONS = 15
+
+def load_and_preprocess_data():
+    """
+    Load data from the database and preprocess it.
+    This function fetches the recipes and processed_recipes tables, creates one-hot encoded
+    meal type columns, and merges the data on the recipe title.
+    
+    Returns:
+      recipe_data (DataFrame): Merged DataFrame.
+      db_manager (DatabaseManager): An instance of the DatabaseManager.
+    """
+    db_manager = DatabaseManager()
+    
+    # Load processed recipes.
+    processed_df = pd.read_sql(
+        "SELECT title, ingredient, serving_quantity, category, lastmodifieddate FROM meal_planning.processed_recipes",
+        db_manager.engine
+    )
+    logger.info("Fetched processed_recipes: %d rows", len(processed_df))
+    
+    # Load raw recipes.
+    meals_df = pd.read_sql(
+        "SELECT title, categories, rating, difficulty, lastmodifieddate FROM meal_planning.recipes",
+        db_manager.engine
+    )
+    logger.info("Fetched recipes: %d rows", len(meals_df))
+    
+    # Create a meal_type column by parsing the categories field (assuming it's a comma-separated string).
+    meals_df['meal_type'] = meals_df['categories'].apply(
+        lambda x: [m.strip() for m in x.split(',') if m.strip() in MEAL_TYPES] if isinstance(x, str) else []
+    )
+    
+    # One-hot encode meal types: for each meal type, create a binary column.
+    for meal in MEAL_TYPES:
+        meals_df[meal] = meals_df['meal_type'].apply(lambda x: 1 if meal in x else 0)
+    
+    # Optionally, drop the temporary meal_type column.
+    meals_df.drop(columns=['meal_type'], inplace=True)
+    
+    # Merge raw recipes with processed recipes on title.
+    recipe_data = pd.merge(meals_df, processed_df, on='title', how='left', suffixes=("", "_processed"))
+    
+    # logger.info("Merged recipe data sample:\n%s", recipe_data[['title', 'ingredient', 'category']].head())
+    print(recipe_data[['title', 'ingredient', 'category', 'Breakfasts', 'Lunches', 'Dinner', 'Snacks']].head())
+    
+    return recipe_data, db_manager
 
 def build_model_parameters(recipe_data):
     """
@@ -56,18 +102,13 @@ def build_model_parameters(recipe_data):
     R = recipe_data['title'].unique().tolist()
     I = recipe_data['ingredient'].unique().tolist()
     
-    # Build allowed_meal: for each recipe, determine which meal types it is allowed for.
+    # Build allowed_meal: for each recipe, determine which meal types it is allowed for.  
     allowed_meal = {}
     for r in R:
-        # Get the first row for this recipe.
+        # Here we assume that recipe_data has one-hot columns for each meal type.
         row = recipe_data[recipe_data['title'] == r].iloc[0]
-        mt_value = row['meal_type']
-        if isinstance(mt_value, list):
-            allowed = mt_value
-        else:
-            allowed = [m.strip() for m in mt_value.split(',')]
         for m in MEAL_TYPES:
-            allowed_meal[(r, m)] = 1 if m in allowed else 0
+            allowed_meal[(r, m)] = int(row[m]) if m in row and pd.notnull(row[m]) else 0
     
     # Set maximum occurrences for each recipe.
     max_occurrence = {r: DEFAULT_MAX_OCCURRENCE for r in R}
@@ -182,36 +223,8 @@ def build_pyomo_model(R, I, allowed_meal, max_occurrence, A, cat, req):
     
 
 def main():
-    # Instantiate DatabaseManager and load data.
-    db_manager = DatabaseManager()
-    
-    processed_df = pd.read_sql(
-        "SELECT title, ingredient, serving_quantity, category FROM meal_planning.processed_recipes",
-        db_manager.engine
-    )
-    logger.info("Fetched processed_recipes: %d rows", len(processed_df))
-    
-    meals_df = pd.read_sql(
-        "SELECT title, categories, rating, difficulty FROM meal_planning.recipes",
-        db_manager.engine
-    )
-    logger.info("Fetched recipes: %d rows", len(meals_df))
-    
-    # Create meal_type column by parsing the categories field.
-    meals_df['meal_type'] = meals_df['categories'].apply(
-        lambda x: x if isinstance(x, list) else [m.strip() for m in x.split(',') if m.strip() in MEAL_TYPES]
-    )
-
-    meals_df.drop(columns=['categories'], inplace=True)
-
-    recipe_data = pd.merge(meals_df, processed_df, on='title')
-
-
-    # print(meals_df[['title', 'meal_type']].head())
-    # print(recipe_data[['title', 'ingredient', 'category', 'meal_type']].head())
-
-    # print the top recipes for each meal type
-    # compute_plant_diversity_by_recipe(meals_df)
+    # Load and preprocess data.
+    recipe_data, db_manager = load_and_preprocess_data()
     
     # Build model parameters.
     R, I, allowed_meal, max_occurrence, A, cat, req = build_model_parameters(recipe_data)
