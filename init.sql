@@ -39,10 +39,14 @@ CREATE TABLE IF NOT EXISTS meal_planning.recipes (
 
 -- Create the processed_recipes table if it does not exist
 CREATE TABLE IF NOT EXISTS meal_planning.processed_recipes (
-    title text NOT NULL,
-    ingredient text NOT NULL,
-    serving_quantity text,
-    category text,
-    lastmodifieddate timestamp with time zone,
+    title              text NOT NULL,
+    ingredient         text NOT NULL,
+    serving_quantity   text,
+    category           text,
+    breakfasts         integer NOT NULL DEFAULT 0,
+    lunches            integer NOT NULL DEFAULT 0,
+    dinner             integer NOT NULL DEFAULT 0,
+    snacks             integer NOT NULL DEFAULT 0,
+    lastmodifieddate   timestamp with time zone,
     UNIQUE (title, ingredient)
 );

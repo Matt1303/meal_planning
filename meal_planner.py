@@ -34,51 +34,51 @@ CATEGORY_REQUIREMENTS = {
 }
 MAX_RELAXATIONS = 15
 
-def load_and_preprocess_data():
-    """
-    Load data from the database and preprocess it.
-    This function fetches the recipes and processed_recipes tables, creates one-hot encoded
-    meal type columns, and merges the data on the recipe title.
+# def load_and_preprocess_data():
+#     """
+#     Load data from the database and preprocess it.
+#     This function fetches the recipes and processed_recipes tables, creates one-hot encoded
+#     meal type columns, and merges the data on the recipe title.
     
-    Returns:
-      recipe_data (DataFrame): Merged DataFrame.
-      db_manager (DatabaseManager): An instance of the DatabaseManager.
-    """
-    db_manager = DatabaseManager()
+#     Returns:
+#       recipe_data (DataFrame): Merged DataFrame.
+#       db_manager (DatabaseManager): An instance of the DatabaseManager.
+#     """
+#     db_manager = DatabaseManager()
     
-    # Load processed recipes.
-    processed_df = pd.read_sql(
-        "SELECT title, ingredient, serving_quantity, category, lastmodifieddate FROM meal_planning.processed_recipes",
-        db_manager.engine
-    )
-    logger.info("Fetched processed_recipes: %d rows", len(processed_df))
+#     # Load processed recipes.
+#     processed_df = pd.read_sql(
+#         "SELECT title, ingredient, serving_quantity, category, lastmodifieddate FROM meal_planning.processed_recipes",
+#         db_manager.engine
+#     )
+#     logger.info("Fetched processed_recipes: %d rows", len(processed_df))
     
-    # Load raw recipes.
-    meals_df = pd.read_sql(
-        "SELECT title, categories, rating, difficulty, lastmodifieddate FROM meal_planning.recipes",
-        db_manager.engine
-    )
-    logger.info("Fetched recipes: %d rows", len(meals_df))
+#     # Load raw recipes.
+#     meals_df = pd.read_sql(
+#         "SELECT title, categories, rating, difficulty, lastmodifieddate FROM meal_planning.recipes",
+#         db_manager.engine
+#     )
+#     logger.info("Fetched recipes: %d rows", len(meals_df))
     
-    # Create a meal_type column by parsing the categories field (assuming it's a comma-separated string).
-    meals_df['meal_type'] = meals_df['categories'].apply(
-        lambda x: [m.strip() for m in x.split(',') if m.strip() in MEAL_TYPES] if isinstance(x, str) else []
-    )
+#     # Create a meal_type column by parsing the categories field (assuming it's a comma-separated string).
+#     meals_df['meal_type'] = meals_df['categories'].apply(
+#         lambda x: [m.strip() for m in x.split(',') if m.strip() in MEAL_TYPES] if isinstance(x, str) else []
+#     )
     
-    # One-hot encode meal types: for each meal type, create a binary column.
-    for meal in MEAL_TYPES:
-        meals_df[meal] = meals_df['meal_type'].apply(lambda x: 1 if meal in x else 0)
+#     # One-hot encode meal types: for each meal type, create a binary column.
+#     for meal in MEAL_TYPES:
+#         meals_df[meal] = meals_df['meal_type'].apply(lambda x: 1 if meal in x else 0)
     
-    # Optionally, drop the temporary meal_type column.
-    meals_df.drop(columns=['meal_type'], inplace=True)
+#     # Optionally, drop the temporary meal_type column.
+#     meals_df.drop(columns=['meal_type'], inplace=True)
     
-    # Merge raw recipes with processed recipes on title.
-    recipe_data = pd.merge(meals_df, processed_df, on='title', how='left', suffixes=("", "_processed"))
+#     # Merge raw recipes with processed recipes on title.
+#     recipe_data = pd.merge(meals_df, processed_df, on='title', how='left', suffixes=("", "_processed"))
     
-    # logger.info("Merged recipe data sample:\n%s", recipe_data[['title', 'ingredient', 'category']].head())
-    print(recipe_data[['title', 'ingredient', 'category', 'Breakfasts', 'Lunches', 'Dinner', 'Snacks']].head())
+#     # logger.info("Merged recipe data sample:\n%s", recipe_data[['title', 'ingredient', 'category']].head())
+#     print(recipe_data[['title', 'ingredient', 'category', 'Breakfasts', 'Lunches', 'Dinner', 'Snacks']].head())
     
-    return recipe_data, db_manager
+#     return recipe_data, db_manager
 
 def build_model_parameters(recipe_data):
     """
@@ -224,7 +224,13 @@ def build_pyomo_model(R, I, allowed_meal, max_occurrence, A, cat, req):
 
 def main():
     # Load and preprocess data.
-    recipe_data, db_manager = load_and_preprocess_data()
+    # recipe_data, db_manager = load_and_preprocess_data()
+
+    db_manager = DatabaseManager()
+    recipe_data = pd.read_sql(
+         "SELECT title, ingredient, serving_quantity, category, breakfasts, lunches, dinner, snacks, lastmodifieddate FROM meal_planning.processed_recipes",
+         db_manager.engine
+     )
     
     # Build model parameters.
     R, I, allowed_meal, max_occurrence, A, cat, req = build_model_parameters(recipe_data)
