@@ -16,69 +16,23 @@ logging.getLogger('pyomo').setLevel(logging.WARNING)
 
 # Global model constants.
 DAYS = list(range(1, 8))  # Days 1 through 7
-MEAL_TYPES = ['Breakfasts', 'Lunches', 'Dinner', 'Snacks'] #, 'Side Salad']
+MEAL_TYPES = ['breakfasts', 'lunches', 'dinner', 'snacks'] #, 'Side Salad']
 DEFAULT_MAX_OCCURRENCE = 5
 
 # Define the daily requirements for each category.
 CATEGORY_REQUIREMENTS = {
-    #'Beans': 3,
-    #'Berries': 1,
-    #'Other Fruits': 3,
-    #'Cruciferous Vegetables': 1,
-    #'Greens': 2,
+    'Beans': 3,
+    'Berries': 1,
+    'Other Fruits': 2,
+    'Cruciferous Vegetables': 1,
+    'Greens': 2,
     'Other Vegetables': 2,
     #'Flaxseeds or Linseeds': 1,
     #'Nuts and Seeds': 1,
     #'Herbs and Spices': 1,
-    'Whole Grains': 2 #3
+    'Whole Grains': 2
 }
 MAX_RELAXATIONS = 15
-
-# def load_and_preprocess_data():
-#     """
-#     Load data from the database and preprocess it.
-#     This function fetches the recipes and processed_recipes tables, creates one-hot encoded
-#     meal type columns, and merges the data on the recipe title.
-    
-#     Returns:
-#       recipe_data (DataFrame): Merged DataFrame.
-#       db_manager (DatabaseManager): An instance of the DatabaseManager.
-#     """
-#     db_manager = DatabaseManager()
-    
-#     # Load processed recipes.
-#     processed_df = pd.read_sql(
-#         "SELECT title, ingredient, serving_quantity, category, lastmodifieddate FROM meal_planning.processed_recipes",
-#         db_manager.engine
-#     )
-#     logger.info("Fetched processed_recipes: %d rows", len(processed_df))
-    
-#     # Load raw recipes.
-#     meals_df = pd.read_sql(
-#         "SELECT title, categories, rating, difficulty, lastmodifieddate FROM meal_planning.recipes",
-#         db_manager.engine
-#     )
-#     logger.info("Fetched recipes: %d rows", len(meals_df))
-    
-#     # Create a meal_type column by parsing the categories field (assuming it's a comma-separated string).
-#     meals_df['meal_type'] = meals_df['categories'].apply(
-#         lambda x: [m.strip() for m in x.split(',') if m.strip() in MEAL_TYPES] if isinstance(x, str) else []
-#     )
-    
-#     # One-hot encode meal types: for each meal type, create a binary column.
-#     for meal in MEAL_TYPES:
-#         meals_df[meal] = meals_df['meal_type'].apply(lambda x: 1 if meal in x else 0)
-    
-#     # Optionally, drop the temporary meal_type column.
-#     meals_df.drop(columns=['meal_type'], inplace=True)
-    
-#     # Merge raw recipes with processed recipes on title.
-#     recipe_data = pd.merge(meals_df, processed_df, on='title', how='left', suffixes=("", "_processed"))
-    
-#     # logger.info("Merged recipe data sample:\n%s", recipe_data[['title', 'ingredient', 'category']].head())
-#     print(recipe_data[['title', 'ingredient', 'category', 'Breakfasts', 'Lunches', 'Dinner', 'Snacks']].head())
-    
-#     return recipe_data, db_manager
 
 def build_model_parameters(recipe_data):
     """
