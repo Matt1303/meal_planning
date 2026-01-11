@@ -13,8 +13,9 @@ import logging
 from prompts import INSTRUCTIONS, OUTPUT_FORMAT
 from db_manager import DatabaseManager
 
-# Constants for meal types
-MEAL_TYPES = ['Breakfasts', 'Lunches', 'Dinner', 'Snacks']
+
+# Constants for meal types (lowercase to match database columns and meal_planner.py)
+MEAL_TYPES = ['breakfasts', 'lunches', 'dinner', 'snacks']
 
 # Initialize OpenAI client
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -127,12 +128,13 @@ class RecipeProcessor:
 
 def write_processed_with_mealtypes(df, recipes_df, db_manager):
     # One-hot encode meal types based on source recipes_df
+    # Note: categories from HTML are titlecase, but we store lowercase in DB
     recipes_df['categories'] = recipes_df['categories'].apply(lambda x: x if isinstance(x,list) else x.split(','))
     for m in MEAL_TYPES:
-        recipes_df[m] = recipes_df['categories'].apply(lambda cats: 1 if m in cats else 0)
-    # Merge flags into processed df
+        # Compare with titlecase version since HTML categories are titlecase
+        recipes_df[m] = recipes_df['categories'].apply(lambda cats: 1 if m.capitalize() in cats else 0)
+    # Merge flags into processed df (MEAL_TYPES already lowercase, no rename needed)
     merged = df.merge(recipes_df[['title']+MEAL_TYPES], on='title', how='left')
-    merged.rename(columns={m: m.lower() for m in MEAL_TYPES}, inplace=True)
     # Upsert into Postgres
     db_manager.write_to_db('processed_recipes', merged, schema='meal_planning',
                            unique_constraint_columns=["title","ingredient"])

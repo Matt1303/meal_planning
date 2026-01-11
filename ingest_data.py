@@ -2,6 +2,7 @@
 # coding: utf-8
 
 import os
+import shutil
 import time
 import pandas as pd
 from sqlalchemy import create_engine, text
@@ -108,7 +109,7 @@ class RecipeExtractor:
 def clone_repo(repo_url, clone_dir):
     if os.path.exists(clone_dir):
         logger.info(f"Removing existing directory: {clone_dir}")
-        os.system(f'rm -rf {clone_dir}')
+        shutil.rmtree(clone_dir)
     logger.info(f"Cloning repository {repo_url} into {clone_dir}")
     Repo.clone_from(repo_url, clone_dir)
     logger.info(f"Repository cloned into {clone_dir}")
