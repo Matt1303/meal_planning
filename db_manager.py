@@ -9,7 +9,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-
 class DatabaseManager:
     def __init__(self):
         self.user = os.getenv('DB_USER', 'postgres')
@@ -44,15 +43,15 @@ class DatabaseManager:
         return {row[0] for row in rows}
 
     def table_exists(self, table_name, schema='meal_planning'):
-        query = f"""
+        query = text("""
         SELECT EXISTS (
-            SELECT FROM information_schema.tables 
-            WHERE table_schema = '{schema}' 
-              AND table_name = '{table_name}'
+            SELECT FROM information_schema.tables
+            WHERE table_schema = :schema
+              AND table_name = :table_name
         );
-        """
+        """)
         with self.engine.connect() as conn:
-            exists = conn.execute(text(query)).scalar()
+            exists = conn.execute(query, {"schema": schema, "table_name": table_name}).scalar()
         return exists
 
     def write_to_db(self, table_name, df, schema='meal_planning', unique_constraint_columns=None):
@@ -104,10 +103,10 @@ class DatabaseManager:
         titles_to_delete = processed_titles - source_titles
         
         if titles_to_delete:
-            placeholders = ", ".join([f"'{title}'" for title in titles_to_delete])
-            delete_query = f"DELETE FROM {schema}.{processed_table} WHERE title IN ({placeholders})"
+            # Use parameterized query with ANY to safely handle list of titles
+            delete_query = text(f"DELETE FROM {schema}.{processed_table} WHERE title = ANY(:titles)")
             with self.engine.connect() as conn:
-                conn.execute(text(delete_query))
+                conn.execute(delete_query, {"titles": list(titles_to_delete)})
                 conn.commit()
             logger.info("Deleted %d recipes from %s.%s that no longer exist in %s.%s.", len(titles_to_delete), schema, processed_table, schema, source_table)
         else:
