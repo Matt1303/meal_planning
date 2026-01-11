@@ -3,3 +3,6 @@ data_pgadmin/
 Archive/
 Archive/meal_planning copy.ipynb
 data_pgadmin/pgadmin4.db
+.ipynb_checkpoints/
+__pycache__/
+.DS_Store
