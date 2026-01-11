@@ -50,3 +50,23 @@ CREATE TABLE IF NOT EXISTS meal_planning.processed_recipes (
     lastmodifieddate   timestamp with time zone,
     UNIQUE (title, ingredient)
 );
+
+CREATE TABLE IF NOT EXISTS meal_planning.weekly_meal_plan (
+    run_time           timestamp with time zone NOT NULL,
+    week_number        integer            NOT NULL,
+    day                integer           NOT NULL,
+    breakfast          text,
+    lunch              text,
+    dinner             text,
+    snack              text,
+    beans               integer,
+    berries             integer,
+    other_fruits        integer,
+    cruciferous_vegetables integer,
+    greens              integer,
+    other_vegetables    integer,
+    flaxseeds           integer,
+    nuts_and_seeds      integer,
+    herbs_and_spices    integer,
+    whole_grains        integer
+);

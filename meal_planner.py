@@ -5,6 +5,7 @@ from pyomo.environ import *
 from db_manager import DatabaseManager
 import logging
 from datetime import datetime
+from sqlalchemy import text
 from pyomo.opt import SolverFactory, TerminationCondition
 
 # Configure logging.
@@ -16,7 +17,7 @@ logging.getLogger('pyomo').setLevel(logging.WARNING)
 
 # Global model constants.
 DAYS = list(range(1, 8))  # Days 1 through 7
-MEAL_TYPES = ['breakfasts', 'lunches', 'dinner', 'snacks'] #, 'Side Salad']
+MEAL_TYPES = ['breakfasts', 'lunches', 'dinner', 'snacks']
 DEFAULT_MAX_OCCURRENCE = 5
 
 # Define the daily requirements for each category.
@@ -27,209 +28,136 @@ CATEGORY_REQUIREMENTS = {
     'Cruciferous Vegetables': 1,
     'Greens': 2,
     'Other Vegetables': 2,
-    #'Flaxseeds or Linseeds': 1,
-    #'Nuts and Seeds': 1,
-    #'Herbs and Spices': 1,
+    # 'Flaxseeds or Linseeds': 1,
+    'Nuts and Seeds': 1,
+    'Herbs and Spices': 1,
     'Whole Grains': 2
 }
 MAX_RELAXATIONS = 15
 
+
 def build_model_parameters(recipe_data):
-    """
-    Build model parameters for the Pyomo meal-planning model using a merged DataFrame.
-    
-    Parameters:
-      recipe_data (DataFrame): Merged DataFrame from meals_df and processed_df,
-                               containing at least the columns 'title', 'meal_type',
-                               'ingredient', and 'category'.
-    
-    Returns:
-      R: list of unique recipe titles.
-      I: list of unique ingredients.
-      allowed_meal: dict mapping (recipe, meal) -> 0/1 indicating if the recipe is allowed for that meal.
-      max_occurrence: dict mapping recipe -> maximum number of occurrences (default constant).
-      A: dict mapping (recipe, ingredient) -> 0/1 (1 if the recipe uses the ingredient).
-      cat: dict mapping each ingredient -> its category (merging "Flaxseeds" and "Linseeds").
-      req: dictionary of daily category requirements (a copy of CATEGORY_REQUIREMENTS).
-    """
-    # Assume recipe_data has columns: 'title', 'meal_type', 'ingredient', 'category'
+    logger.info("Building model parameters from recipe data with %d rows", len(recipe_data))
     R = recipe_data['title'].unique().tolist()
     I = recipe_data['ingredient'].unique().tolist()
-    
-    # Build allowed_meal: for each recipe, determine which meal types it is allowed for.  
-    allowed_meal = {}
-    for r in R:
-        # Here we assume that recipe_data has one-hot columns for each meal type.
-        row = recipe_data[recipe_data['title'] == r].iloc[0]
-        for m in MEAL_TYPES:
-            allowed_meal[(r, m)] = int(row[m]) if m in row and pd.notnull(row[m]) else 0
-    
-    # Set maximum occurrences for each recipe.
+    allowed_meal = {(r, m): int(recipe_data.loc[recipe_data['title']==r, m].iloc[0])
+                    for r in R for m in MEAL_TYPES}
     max_occurrence = {r: DEFAULT_MAX_OCCURRENCE for r in R}
-    
-    # Build the mapping A: (recipe, ingredient) -> 0/1.
-    A = {}
-    for r in R:
-        for ing in I:
-            # If any row in recipe_data has this recipe and ingredient, set A[(r, ing)] = 1.
-            if not recipe_data[(recipe_data['title'] == r) & (recipe_data['ingredient'] == ing)].empty:
-                A[(r, ing)] = 1
-            else:
-                A[(r, ing)] = 0
-    
-    # Build the category mapping for each ingredient.
-    cat = {}
-    for ing in I:
-        rows = recipe_data[recipe_data['ingredient'] == ing]
-        if not rows.empty:
-            value = rows.iloc[0]['category']
-            # Merge "Flaxseeds" and "Linseeds" into one category.
-            if value in ["Flaxseeds", "Linseeds"]:
-                cat[ing] = "Flaxseeds or Linseeds"
-            else:
-                cat[ing] = value
-        else:
-            cat[ing] = None
-    
-    # Use a copy of the global CATEGORY_REQUIREMENTS as the requirements.
+    A = {(r, i): 0 for r in R for i in I}
+    for _, row in recipe_data.iterrows():
+        A[(row['title'], row['ingredient'])] = 1
+    cat = {i: None for i in I}
+    for _, row in recipe_data.iterrows():
+        c = row['category']
+        cat[row['ingredient']] = 'Flaxseeds or Linseeds' if c in ['Flaxseeds','Linseeds'] else c
     req = CATEGORY_REQUIREMENTS.copy()
-    
+    logger.info("Model parameters: %d recipes, %d ingredients", len(R), len(I))
     return R, I, allowed_meal, max_occurrence, A, cat, req
 
 
 def build_pyomo_model(R, I, allowed_meal, max_occurrence, A, cat, req):
+    logger.info("Building Pyomo model")
     model = ConcreteModel()
-    
     model.D = Set(initialize=DAYS)
     model.M = Set(initialize=MEAL_TYPES)
     model.R = Set(initialize=R)
     model.I = Set(initialize=I)
     model.C = Set(initialize=list(req.keys()))
-    
-    # Decision variable: x[r,d,m] = 1 if recipe r is selected on day d for meal m.
     model.x = Var(model.R, model.D, model.M, domain=Binary)
-    
-    # Linking variable: z[d,i] = 1 if ingredient i is used on day d.
     model.z = Var(model.D, model.I, domain=Binary)
-    
-    # Global usage: y[i] = 1 if ingredient i is used in the week.
     model.y = Var(model.I, domain=Binary)
-    
-    # --- New Constraint: Ensure that a recipe can only be selected for a meal slot if it is allowed.
-    def allowed_meal_rule(model, r, d, m):
-        return model.x[r, d, m] <= allowed_meal[(r, m)]
-    model.allowed_meal_constraint = Constraint(model.R, model.D, model.M, rule=allowed_meal_rule)
-    
-    # Constraint: Exactly one recipe per day per meal slot.
-    def meal_slot_rule(model, d, m):
-        return sum(model.x[r, d, m] for r in model.R) == 1
-    model.meal_slot_constraint = Constraint(model.D, model.M, rule=meal_slot_rule)
-    
-    # Constraint: Each recipe appears at most max_occurrence times.
-    def recipe_occurrence_rule(model, r):
-        return sum(model.x[r, d, m] for d in model.D for m in model.M) <= max_occurrence[r]
-    model.recipe_occurrence = Constraint(model.R, rule=recipe_occurrence_rule)
-    
-    # Linking constraint: Ingredient usage on day d.
-    def ingredient_usage_rule(model, d, i):
-        return model.z[d, i] <= sum(A[(r, i)] * model.x[r, d, m] for r in model.R for m in model.M)
-    model.ingredient_usage = Constraint(model.D, model.I, rule=ingredient_usage_rule)
-    
-    # Global linking: y[i] is 1 if ingredient i is used on any day.
-    def ingredient_global_lower(model, i):
-        return model.y[i] <= sum(model.z[d, i] for d in model.D)
-    model.ingredient_global_lower = Constraint(model.I, rule=ingredient_global_lower)
-    
-    def ingredient_global_upper(model, i):
-        return sum(model.z[d, i] for d in model.D) <= len(DAYS) * model.y[i]
-    model.ingredient_global_upper = Constraint(model.I, rule=ingredient_global_upper)
-    
-    # Category constraint: For each day and each category c, at least req[c] distinct ingredients must be used.
-    def category_day_rule(model, d, c):
-        return sum(model.z[d, i] for i in model.I if cat[i] == c) >= req[c]
-    model.category_constraint = Constraint(model.D, model.C, rule=category_day_rule)
-    
-    # Objective: maximize the number of distinct ingredients used over the week.
-    def objective_rule(model):
-        return sum(model.y[i] for i in model.I)
-    model.objective = Objective(rule=objective_rule, sense=maximize)
-    
+    model.allowed_meal_constraint = Constraint(model.R, model.D, model.M,
+        rule=lambda m,r,d,meal: m.x[r,d,meal] <= allowed_meal[(r,meal)])
+    model.meal_slot_constraint = Constraint(model.D, model.M,
+        rule=lambda m,d,meal: sum(m.x[r,d,meal] for r in m.R)==1)
+    model.recipe_occurrence = Constraint(model.R,
+        rule=lambda m,r: sum(m.x[r,d,meal] for d in m.D for meal in m.M)<=max_occurrence[r])
+    model.ingredient_usage = Constraint(model.D, model.I,
+        rule=lambda m,d,i: m.z[d,i] <= sum(A[(r,i)]*m.x[r,d,meal] for r in m.R for meal in m.M))
+    model.ingredient_global_lower = Constraint(model.I,
+        rule=lambda m,i: m.y[i] <= sum(m.z[d,i] for d in m.D))
+    model.ingredient_global_upper = Constraint(model.I,
+        rule=lambda m,i: sum(m.z[d,i] for d in m.D) <= len(DAYS)*m.y[i])
+    model.category_constraint = Constraint(model.D, model.C,
+        rule=lambda m,d,c: sum(m.z[d,i] for i in m.I if cat[i]==c) >= req[c])
+    model.objective = Objective(rule=lambda m: sum(m.y[i] for i in m.I), sense=maximize)
+    logger.info("Pyomo model built with %d decision vars", len(model.x))
     return model
 
-# def compute_plant_diversity_by_recipe(meals_df):
-#     # Compute diversity: for each recipe, count unique ingredients overall and per category.
-#     # First, group by recipe title and category.
-#     diversity_by_category = meals_df.groupby(['title', 'meal_type'])['ingredient'].nunique().unstack(fill_value=0)
-#     diversity_by_category['total'] = diversity_by_category.sum(axis=1)
-    
-#     # Merge the meal_type information.
-#     meal_diversity = pd.merge(meals_df[['title', 'meal_type']], diversity_by_category, on='title')
-    
-#     # For each meal type, log the top recipes (by unique ingredient count).
-#     for meal in MEAL_TYPES:
-#         subset = meal_diversity[meal_diversity['meal_type'].apply(lambda lst: meal in lst)]
-#         top_recipes = subset.sort_values(by='total', ascending=False).head(5)
-#         logger.info("Top recipes for %s (by unique ingredient count):", meal)
-#         for _, row in top_recipes.iterrows():
-#             # You can also log the breakdown by category if desired.
-#             logger.info("Recipe: %s, Total Unique Ingredients: %d, Breakdown: %s",
-#                         row['title'], row['total'], row.drop(['title', 'meal_type', 'total']).to_dict())
-    
 
 def main():
-    # Load and preprocess data.
-    # recipe_data, db_manager = load_and_preprocess_data()
-
+    logger.info("Starting weekly summary generation")
     db_manager = DatabaseManager()
-    recipe_data = pd.read_sql(
-         "SELECT title, ingredient, serving_quantity, category, breakfasts, lunches, dinner, snacks, lastmodifieddate FROM meal_planning.processed_recipes",
-         db_manager.engine
-     )
-    
-    # Build model parameters.
-    R, I, allowed_meal, max_occurrence, A, cat, req = build_model_parameters(recipe_data)
-    
-    # Build the Pyomo model.
-    model = build_pyomo_model(R, I, allowed_meal, max_occurrence, A, cat, req)
-    
-    # Create a solver.
-    solver = SolverFactory('glpk')
-    
-    # Attempt to solve with potential relaxation if infeasible.
-    relaxations = 0
-    while True:
-        results = solver.solve(model, tee=False)
-        term_cond = results.solver.termination_condition
-        if term_cond == TerminationCondition.optimal:
-            logger.info("Solver found an optimal solution.")
-            break
-        elif term_cond in [TerminationCondition.infeasible, TerminationCondition.infeasibleOrUnbounded]:
-            if relaxations < MAX_RELAXATIONS:
-                # Relax one category constraint: reduce the requirement by 1 for the first category that is > 0.
-                for c in req:
-                    if req[c] > 0:
-                        req[c] -= 1
-                        logger.info("Relaxing requirement for category '%s' to %d", c, req[c])
-                        break
-                # Rebuild the model with the new requirements.
-                model = build_pyomo_model(R, I, allowed_meal, max_occurrence, A, cat, req)
-                relaxations += 1
-            else:
-                logger.error("Unable to find a feasible solution after %d relaxations.", MAX_RELAXATIONS)
-                return
-        else:
-            logger.error("Solver terminated with condition: %s", term_cond)
-            return
 
-    # Extract the meal plan from the solution.
-    meal_plan = {}
-    for d in model.D:
-        meal_plan[d] = {}
-        for m in model.M:
-            for r in model.R:
-                if value(model.x[r, d, m]) > 0.5:
-                    meal_plan[d][m] = r
-    logger.info("Meal plan for the week: %s", meal_plan)
-    
+    logger.info("Loading processed_recipes from database")
+    processed_df = pd.read_sql(
+        f"SELECT title, ingredient, serving_quantity, category, "
+        + ", ".join(MEAL_TYPES) + ", lastmodifieddate FROM meal_planning.processed_recipes",
+        db_manager.engine)
+    logger.info("Loaded %d rows from processed_recipes", len(processed_df))
+
+    # build & solve
+    R, I, allowed_meal, max_occurrence, A, cat, req = build_model_parameters(processed_df)
+    model = build_pyomo_model(R, I, allowed_meal, max_occurrence, A, cat, req)
+    solver = SolverFactory('glpk')
+
+    logger.info("Solving model")
+    relax = 0
+    while True:
+        res = solver.solve(model, tee=False)
+        tc = res.solver.termination_condition
+        if tc == TerminationCondition.optimal:
+            logger.info("Optimal solution found")
+            break
+        if tc in [TerminationCondition.infeasible, TerminationCondition.infeasibleOrUnbounded] and relax<MAX_RELAXATIONS:
+            logger.warning("Infeasible, relaxing constraints (step %d)", relax+1)
+            for c in req:
+                if req[c]>0:
+                    req[c]-=1
+                    break
+            model = build_pyomo_model(R, I, allowed_meal, max_occurrence, A, cat, req)
+            relax+=1
+            continue
+        logger.error("Solver terminated with condition: %s", tc)
+        return
+
+    # extract plan
+    logger.info("Extracting meal plan")
+    plan = {d:{m: next((r for r in R if model.x[r,d,m].value>0.5), None) for m in MEAL_TYPES} for d in DAYS}
+
+    # build summary rows
+    logger.info("Building summary rows")
+    rows=[]
+    for d in DAYS:
+        row={'run_time': datetime.utcnow(), 'week_number': None, 'day': d}
+        for m in MEAL_TYPES:
+            row[m]=plan[d][m]
+        day_df = processed_df[processed_df['title'].isin(list(plan[d].values()))]
+        counts = day_df.groupby('category')['ingredient'].nunique()
+        for c in CATEGORY_REQUIREMENTS:
+            row[f"{c.replace(' ','_').lower()}_count"] = int(counts.get(c,0))
+        rows.append(row)
+    summary = pd.DataFrame(rows)
+    logger.info("Constructed summary DataFrame with %d rows", len(summary))
+
+    # determine next week_number
+    logger.info("Determining next week number")
+    with db_manager.engine.connect() as conn:
+        result = conn.execute(text(f"SELECT max(week_number) FROM meal_planning.weekly_meal_plan"))
+        prev = result.scalar() or 0
+    summary['week_number'] = prev + 1
+    logger.info("Assigned week_number %d to all rows", prev+1)
+
+    # reorder columns
+    cols = ['run_time','week_number','day'] + MEAL_TYPES + [f"{c.replace(' ','_').lower()}_count" for c in CATEGORY_REQUIREMENTS]
+    summary = summary[cols]
+
+    # append summary
+    logger.info("Inserting summary into database")
+    summary.to_sql('weekly_meal_plan', db_manager.engine, schema='meal_planning', if_exists='append', index=False)
+
+    logger.info("Weekly summary generation complete. Here is the result:")
+    print(summary.to_string(index=False))
+
 if __name__ == '__main__':
     main()
