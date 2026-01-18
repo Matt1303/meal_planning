@@ -246,18 +246,49 @@ See `requirements_*.txt` files:
 ## Limitations & Known Issues
 
 ### Current Limitations
-1. **Binary optimization**: Ingredients are either present or not (no quantities)
-2. **Equal ingredient weights**: All ingredients count equally toward variety
-3. **No cost optimization**: Doesn't consider recipe cost or shopping complexity
-4. **Fixed 7-day cycle**: Can't generate partial week plans
-5. **No user preferences**: No allergy/exclusion support
-6. **Manual export**: Requires Paprika export + GitHub upload
+
+#### 1. **Ingredient Quantities NOT Used in Optimization** ⚠️ CRITICAL
+**What's stored**: The `serving_quantity` column in `processed_recipes` table contains per-serving quantities (e.g., "90 grams", "1 cup", "2 tbsp") extracted by OpenAI.
+
+**What the MVP does**:
+- ✅ Stores quantities in database
+- ❌ **Completely ignores them** in optimization and portion counting
+- Counts **unique ingredients** instead of **portions based on grams**
+
+**Example problem**:
+```python
+# Current behavior (line 136 of meal_planner.py):
+counts = day_df.groupby('category')['ingredient'].nunique()
+# This counts: kale, spinach, arugula = 3 "servings" of greens
+# Regardless of whether you have 10g or 200g of each!
+
+# What you want:
+# If kale=200g, spinach=50g, arugula=20g
+# And 1 portion greens = 100g
+# Then: 2.7 portions of greens (not 3)
+```
+
+**Impact**:
+- Nutritional requirements are met by **ingredient variety**, not **actual portion sizes**
+- A recipe with 5g of beans counts the same as one with 150g of beans
+- Daily targets (e.g., "3 servings of beans") mean "3 different bean ingredients" not "3 × 130g portions"
+
+**Status**: This is a **known limitation** of the MVP 2025. See "Future Enhancement: Gram-based Portion Tracking" below.
+
+#### 2. Other Limitations
+- **Equal ingredient weights**: All ingredients count equally toward variety
+- **No cost optimization**: Doesn't consider recipe cost or shopping complexity
+- **Fixed 7-day cycle**: Can't generate partial week plans
+- **No user preferences**: No allergy/exclusion support
+- **Manual export**: Requires Paprika export + GitHub upload
+- **Binary optimization**: Ingredients are either selected or not (related to #1 above)
 
 ### Known Issues
 1. **MEAL_TYPES case inconsistency**: Fixed in claude-improvements branch
 2. **SQL injection vulnerabilities**: Fixed in claude-improvements branch
 3. **No automated testing**: Planned for future
 4. **No error recovery**: Pipeline fails if any step errors
+5. **Portion counting**: See "Ingredient Quantities NOT Used" above - this is the biggest limitation
 
 ## Future Directions
 
@@ -289,24 +320,170 @@ Current workflow (Paprika → HTML → GitHub → Clone) is cumbersome.
 - **Manual input**: Simple web form for recipe entry
 - **Recipe JSON format**: Standard format, git-trackable, no HTML parsing
 
-#### 4. Improved Optimization Model
+#### 4. **Gram-based Portion Tracking** 🎯 HIGH PRIORITY
 
-**Current limitation**: Binary ingredients (present/not present)
+**Problem**: The MVP stores `serving_quantity` but never uses it. Nutritional targets are based on ingredient counts, not actual portions.
 
-**Proposed improvements**:
-- **Gram-based portions**: Track ingredient weights
-  - "1 portion = minimum grams" logic
-  - More accurate nutritional tracking
-- **Multi-objective optimization**:
-  - Primary: Meet nutritional requirements
-  - Secondary: Maximize variety
-  - Tertiary: Minimize cost/complexity
-- **Weighted ingredients**: Prioritize nutrient-dense foods
-- **Soft constraints**: Allow minor requirement violations with penalties
-- **Recipe ratings**: Factor in recipe quality/preferences
+**Solution**: Implement proper portion-based optimization.
 
-**Alternative to Pyomo**:
-If Pyomo becomes computationally challenging, consider:
+##### Step 1: Parse Quantity Strings
+The `serving_quantity` field currently stores strings like:
+- "90 grams"
+- "1 cup"
+- "2 tbsp"
+- "1" (count)
+
+**Approach**:
+```python
+# Add to data_processor.py or create quantity_parser.py
+def parse_quantity(qty_string):
+    """
+    Parse "90 grams" -> (90.0, "grams")
+    Parse "1 cup" -> (1.0, "cup")
+    Parse "2 tbsp" -> (2.0, "tbsp")
+    """
+    # Use regex or Claude API for structured extraction
+    # Store in new columns: quantity_value (DECIMAL), quantity_unit (TEXT)
+```
+
+##### Step 2: Define Portion Thresholds
+Create configuration for "1 portion = X grams" by category.
+
+**Example portion definitions** (based on Dr. Greger's Daily Dozen):
+```python
+PORTION_THRESHOLDS_GRAMS = {
+    'Beans': 130,           # 1 portion = 130g cooked beans
+    'Berries': 60,          # 1 portion = 60g (half cup)
+    'Other Fruits': 80,     # 1 portion = 1 medium fruit ~80g
+    'Cruciferous Vegetables': 40,  # 1 portion = 40g (half cup chopped)
+    'Greens': 60,           # 1 portion = 60g raw or 90g cooked
+    'Other Vegetables': 75, # 1 portion = 75g (half cup)
+    'Nuts and Seeds': 15,   # 1 portion = small handful ~15g
+    'Herbs and Spices': 2,  # 1 portion = quarter teaspoon ~2g
+    'Whole Grains': 90,     # 1 portion = half cup cooked ~90g
+}
+
+# Handle unit conversions
+UNIT_TO_GRAMS = {
+    'cup': 240,  # ml for liquids, varies for solids
+    'tbsp': 15,
+    'tsp': 5,
+    'ml': 1,
+    # ... more conversions with category-specific weights
+}
+```
+
+##### Step 3: Update Database Schema
+Add computed columns or create materialized view:
+
+```sql
+-- Option A: Add columns to processed_recipes
+ALTER TABLE meal_planning.processed_recipes
+  ADD COLUMN quantity_value DECIMAL(10,2),
+  ADD COLUMN quantity_unit VARCHAR(20),
+  ADD COLUMN quantity_grams DECIMAL(10,2),  -- normalized to grams
+  ADD COLUMN portions DECIMAL(4,2);          -- calculated portions
+
+-- Option B: Create view (keeps existing structure)
+CREATE VIEW meal_planning.processed_recipes_with_portions AS
+SELECT
+  *,
+  parse_quantity_value(serving_quantity) as quantity_value,
+  parse_quantity_unit(serving_quantity) as quantity_unit,
+  calculate_grams(serving_quantity, category) as quantity_grams,
+  calculate_grams(serving_quantity, category) / get_portion_threshold(category) as portions
+FROM meal_planning.processed_recipes;
+```
+
+##### Step 4: Update Optimization Model
+
+**Current model** (binary):
+```python
+# Current: z[d,i] = 1 if ingredient i used on day d, 0 otherwise
+model.category_constraint = Constraint(model.D, model.C,
+    rule=lambda m,d,c: sum(m.z[d,i] for i in m.I if cat[i]==c) >= req[c])
+```
+
+**Enhanced model** (continuous/integer portions):
+```python
+# Enhanced: track grams, calculate portions
+# Add parameter for grams per ingredient per recipe
+grams_per_recipe_ing = {}  # (recipe, ingredient) -> grams
+
+# Decision variable: grams of each ingredient used on day d
+model.g = Var(model.D, model.I, domain=NonNegativeReals)
+
+# Link grams to recipe selection
+model.grams_from_recipes = Constraint(model.D, model.I,
+    rule=lambda m,d,i: m.g[d,i] ==
+        sum(grams_per_recipe_ing[(r,i)] * m.x[r,d,meal]
+            for r in m.R for meal in m.M if (r,i) in grams_per_recipe_ing))
+
+# Calculate portions from grams
+portions = lambda d,i: model.g[d,i] / portion_thresholds[cat[i]]
+
+# New constraint: meet portion requirements
+model.portion_constraint = Constraint(model.D, model.C,
+    rule=lambda m,d,c:
+        sum(m.g[d,i] / portion_thresholds[c]
+            for i in m.I if cat[i]==c) >= req[c])
+```
+
+##### Step 5: Update Reporting
+
+```python
+# Current (wrong):
+counts = day_df.groupby('category')['ingredient'].nunique()
+
+# Enhanced (correct):
+portions = day_df.groupby('category').apply(
+    lambda group: sum(
+        group['quantity_grams'] / PORTION_THRESHOLDS_GRAMS[group.name]
+    )
+)
+```
+
+##### Implementation Effort
+- **Parsing quantities**: 1-2 days
+  - Regex patterns for common formats
+  - Unit conversion table
+  - Handle edge cases (ranges, "to taste", etc.)
+- **Schema migration**: 1 day
+  - Add columns or create views
+  - Backfill existing data
+- **Optimization model update**: 2-3 days
+  - Convert to continuous variables
+  - Test with real data
+  - Handle infeasibility cases
+- **Testing & validation**: 2-3 days
+  - Compare ingredient counts vs portion counts
+  - Validate portion thresholds are reasonable
+  - End-to-end pipeline test
+
+**Total**: ~1-2 weeks
+
+##### Alternative: Hybrid Approach
+Keep binary optimization but add post-hoc portion validation:
+1. Optimizer selects recipes (current binary approach - fast)
+2. After selection, calculate actual portions from quantities
+3. If portions don't meet requirements, reject solution and re-optimize
+4. Add rejected solutions to "tabu list" to avoid
+
+**Benefit**: Simpler to implement, keeps fast binary solver
+**Drawback**: May need multiple iterations to find valid solution
+
+#### 5. Other Optimization Model Improvements
+
+**Multi-objective optimization**:
+- Primary: Meet nutritional requirements (portions, not counts!)
+- Secondary: Maximize variety
+- Tertiary: Minimize cost/complexity
+
+**Weighted ingredients**: Prioritize nutrient-dense foods
+**Soft constraints**: Allow minor requirement violations with penalties
+**Recipe ratings**: Factor in recipe quality/preferences
+
+**Alternative Solvers** (if Pyomo becomes challenging):
 - **Google OR-Tools**: Faster CP-SAT solver, similar API
 - **PuLP**: Simpler interface, multiple solvers
 - **Heuristic approaches**: Greedy algorithms, simulated annealing
