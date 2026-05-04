@@ -1,103 +1,63 @@
 services:
-  base:
-    build:
-      context: .
-      dockerfile: Dockerfile.base
-    image: mealplanning-base
-    # Use a dummy command so this container doesn't run anything.
-    command: ["true"]
-    
   postgres:
-    image: postgres:latest
+    image: postgres:16
     environment:
-      - POSTGRES_USER=${DB_USER}
-      - POSTGRES_PASSWORD=${DB_PASSWORD}
-      - POSTGRES_DB=${DB_NAME}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_DB: ${DB_NAME:-meal_planning}
     volumes:
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
-      - pgdata:/var/lib/postgresql/data:rw
+      - pgdata:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     networks:
-      - pg-network
+      - mp
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   pgadmin:
     image: dpage/pgadmin4:latest
+    profiles: ["dev"]
     environment:
-      - PGADMIN_DEFAULT_EMAIL=admin@admin.com
-      - PGADMIN_DEFAULT_PASSWORD=root
-      - PGADMIN_CONFIG_ENHANCED_COOKIE_SECURITY=False
-    volumes:
-      - ./data_pgadmin:/var/lib/pgadmin      
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_ENHANCED_COOKIE_SECURITY: "False"
     ports:
       - "8080:80"
+    networks:
+      - mp
     depends_on:
       - postgres
-    networks:
-      - pg-network      
 
-  meal_ingest:
+  app:
     build:
       context: .
-      dockerfile: Dockerfile_meal_ingest
-    depends_on:
-      - postgres
-      - base  # ensure the base image is built first
+      dockerfile: Dockerfile
+    profiles: ["app"]
     environment:
-      - DB_USER=${DB_USER}
-      - DB_PASSWORD=${DB_PASSWORD}
-      - DB_HOST=${DB_HOST}
-      - DB_PORT=${DB_PORT}
-      - DB_NAME=${DB_NAME}
-      - TABLE_NAME=${TABLE_NAME}
-      - REPO_URL=${REPO_URL}
-      - CLONE_DIR=/app/clone_dir
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      DB_HOST: postgres
+      DB_PORT: ${DB_PORT:-5432}
+      DB_NAME: ${DB_NAME:-meal_planning}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      USDA_API_KEY: ${USDA_API_KEY:-}
+      LOG_FORMAT: json
+    volumes:
+      - ./config:/app/config:ro
+      - ./recipes_html:/app/recipes_html:ro
+      - ./data:/app/data
+      - ./reports:/app/reports
     networks:
-      - pg-network
-
-  data_processor:
-    build:
-      context: .
-      dockerfile: Dockerfile_data_processor      
+      - mp
     depends_on:
-      - postgres
-      - base
-      - meal_ingest
-    environment:
-      - DB_USER=${DB_USER}
-      - DB_PASSWORD=${DB_PASSWORD}
-      - DB_HOST=${DB_HOST}
-      - DB_PORT=${DB_PORT}
-      - DB_NAME=${DB_NAME}
-      - TABLE_NAME=${TABLE_NAME}
-      - SCHEMA_NAME=${SCHEMA_NAME}
-      - LAST_MODIFIED_DATE=${LAST_MODIFIED_DATE}
-      - NUM_RECIPES=${NUM_RECIPES}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - FOOD_LIST_PATH=${FOOD_LIST_PATH}
-      - FORCE_UPDATE_PROCESSED=${FORCE_UPDATE_PROCESSED}
-    networks:
-      - pg-network
-
-  meal_planner:
-    build:
-      context: .
-      dockerfile: Dockerfile_meal_planner
-    depends_on:
-      - postgres
-      - base
-      - meal_ingest
-      - data_processor
-    environment:
-      - DB_USER=${DB_USER}
-      - DB_PASSWORD=${DB_PASSWORD}
-      - DB_HOST=${DB_HOST}
-      - DB_PORT=${DB_PORT}
-      - DB_NAME=${DB_NAME}
-    networks:
-      - pg-network     
+      postgres:
+        condition: service_healthy
 
 volumes:
   pgdata:
+
 networks:
-  pg-network:
+  mp:

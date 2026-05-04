@@ -1,0 +1,47 @@
+cases:
+  - raw: "200g black beans"
+    expected_canonical: "black beans"
+    expected_food_group: "Beans"
+    min_grams: 199
+    max_grams: 201
+  - raw: "1 cup brown rice"
+    expected_canonical: "brown rice"
+    expected_food_group: "Whole Grains"
+    min_grams: 195
+    max_grams: 220
+  - raw: "2 cloves garlic, minced"
+    expected_canonical: "garlic"
+    expected_food_group: "Other Vegetables"
+    min_grams: 5
+    max_grams: 7
+  - raw: "1 tbsp ground cumin"
+    expected_canonical: "cumin"
+    expected_food_group: "Herbs and Spices"
+    min_grams: 14
+    max_grams: 16
+  - raw: "400g chickpeas, drained"
+    expected_canonical: "chickpeas"
+    expected_food_group: "Beans"
+    min_grams: 399
+    max_grams: 401
+  - raw: "2 medium onions, chopped"
+    expected_canonical: "onions"
+    expected_food_group: "Other Vegetables"
+  - raw: "1.5 kg butternut squash"
+    expected_canonical: "butternut squash"
+    expected_food_group: "Other Vegetables"
+    min_grams: 1499
+    max_grams: 1501
+  - raw: "100g rolled oats"
+    expected_canonical: "oats"
+    expected_food_group: "Whole Grains"
+    min_grams: 99
+    max_grams: 101
+  - raw: "200-300g lentils"
+    expected_canonical: "lentils: brown, green, red"
+    expected_food_group: "Beans"
+    min_grams: 249
+    max_grams: 251
+  - raw: "1 lemon, juiced"
+    expected_canonical: "lemon"
+    expected_food_group: "Other Fruits"

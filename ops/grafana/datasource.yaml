@@ -1,0 +1,14 @@
+apiVersion: 1
+datasources:
+  - name: meal-planner-pg
+    type: postgres
+    access: proxy
+    url: postgres:5432
+    database: meal_planning
+    user: postgres
+    secureJsonData:
+      password: postgres
+    jsonData:
+      sslmode: disable
+      database: meal_planning
+      postgresVersion: 1600

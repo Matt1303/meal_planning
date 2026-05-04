@@ -1,0 +1,18 @@
+name: meal-planner
+prefect-version: 2.16.5
+
+deployments:
+  - name: weekly-meal-plan
+    entrypoint: flows/weekly_plan_flow.py:weekly_plan_flow
+    schedules:
+      - cron: "0 6 * * 1"
+        timezone: UTC
+        active: true
+    parameters:
+      config_path: config/pipeline.yaml
+      ignore_coverage: false
+    work_pool:
+      name: default
+    tags:
+      - meal-planner
+      - weekly

@@ -1,0 +1,40 @@
+unit,grams_per_unit,note
+g,1,gram
+gram,1,gram
+grams,1,gram
+kg,1000,kilogram
+kilogram,1000,kilogram
+kilograms,1000,kilogram
+mg,0.001,milligram
+milligram,0.001,milligram
+milligrams,0.001,milligram
+oz,28.3495,ounce
+ounce,28.3495,ounce
+ounces,28.3495,ounce
+lb,453.592,pound
+pound,453.592,pound
+pounds,453.592,pound
+ml,1,treated as 1g unless density override
+millilitre,1,treated as 1g unless density override
+millilitres,1,treated as 1g unless density override
+l,1000,litre treated as 1g/ml
+liter,1000,litre treated as 1g/ml
+liters,1000,litre treated as 1g/ml
+litre,1000,litre treated as 1g/ml
+litres,1000,litre treated as 1g/ml
+tsp,5,teaspoon
+teaspoon,5,teaspoon
+teaspoons,5,teaspoon
+tbsp,15,tablespoon
+tablespoon,15,tablespoon
+tablespoons,15,tablespoon
+cup,240,cup (water density default)
+cups,240,cup (water density default)
+pinch,0.3,small pinch
+dash,0.6,dash
+handful,28,rough heuristic
+sprig,1,herbs
+clove,3,garlic clove
+cloves,3,garlic cloves
+stick,113,stick (e.g. butter)
+sticks,113,sticks (e.g. butter)

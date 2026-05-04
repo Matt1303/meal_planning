@@ -1,0 +1,39 @@
+name: migrate
+
+on:
+  pull_request:
+    paths:
+      - "alembic/**"
+      - "src/meal_planner/db/**"
+      - "alembic.ini"
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: meal_planning
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+    env:
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/meal_planning
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: upgrade head
+        run: alembic upgrade head
+      - name: downgrade base
+        run: alembic downgrade base
+      - name: re-upgrade head
+        run: alembic upgrade head

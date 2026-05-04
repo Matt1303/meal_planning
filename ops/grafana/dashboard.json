@@ -1,0 +1,69 @@
+{
+  "title": "meal-planner",
+  "uid": "meal-planner-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Recipes ingested",
+      "datasource": "meal-planner-pg",
+      "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4},
+      "targets": [
+        {
+          "rawSql": "SELECT count(*) AS value FROM meal_planning.recipe;",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Parse cache hit ratio",
+      "datasource": "meal-planner-pg",
+      "gridPos": {"x": 6, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {
+          "rawSql": "SELECT metric_time AS time, metric_value FROM meal_planning.pipeline_metric WHERE metric_name = 'parse_cached' ORDER BY metric_time;",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Nutrition coverage ratio",
+      "datasource": "meal-planner-pg",
+      "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
+      "targets": [
+        {
+          "rawSql": "SELECT metric_time AS time, metric_value FROM meal_planning.pipeline_metric WHERE metric_name = 'nutrition_coverage_ratio' ORDER BY metric_time;",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Solver seconds",
+      "datasource": "meal-planner-pg",
+      "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8},
+      "targets": [
+        {
+          "rawSql": "SELECT run_time AS time, solver_seconds FROM meal_planning.plan_run ORDER BY run_time;",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Slack total per run",
+      "datasource": "meal-planner-pg",
+      "gridPos": {"x": 0, "y": 12, "w": 24, "h": 8},
+      "targets": [
+        {
+          "rawSql": "SELECT run_time AS time, slack_total FROM meal_planning.plan_run ORDER BY run_time;",
+          "format": "time_series"
+        }
+      ]
+    }
+  ]
+}

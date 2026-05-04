@@ -1,8 +1,32 @@
 .env
-data_pgadmin/
-Archive/
-Archive/meal_planning copy.ipynb
-data_pgadmin/pgadmin4.db
-.ipynb_checkpoints/
+.venv/
 __pycache__/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+*.pyc
+.coverage
+coverage.xml
+htmlcov/
 .DS_Store
+*.egg-info/
+build/
+dist/
+
+# Generated reports
+reports/
+plan_report.md
+
+# Local data
+data/cofid.xlsx
+
+# Legacy artefacts kept locally only
+data_pgadmin/
+.ipynb_checkpoints/
+
+# Local Claude session metadata
+.claude/
+
+# Large local-only assets
+recipes_html/
+The-Ultimate-WFPB-Food-List.pdf

@@ -1,0 +1,13 @@
+{
+  "local_html": {
+    "path": "180 recipes/Recipes",
+    "selectors": {
+      "title": "h1",
+      "ingredient_lines": "div.ingredients.text p.line",
+      "category": "p.categories",
+      "rating": "p.rating",
+      "servings": "span[itemprop=recipeYield]",
+      "difficulty": "span[itemprop=difficulty]"
+    }
+  }
+}

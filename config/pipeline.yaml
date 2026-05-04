@@ -1,0 +1,83 @@
+sources:
+  local_html:
+    path: "recipes_html/Recipes"
+    selectors:
+      title: "h1"
+      ingredient_lines: "div.ingredients.text p.line"
+      category: "p.categories"
+      rating: "p.rating"
+      servings: "span[itemprop=recipeYield]"
+      difficulty: "span[itemprop=difficulty]"
+
+parse:
+  food_list_paths:
+    - "config/food_list_canonical.txt"
+  synonyms_path: "config/ingredient_synonyms.csv"
+  unit_grams_path: "config/unit_grams.csv"
+  density_path: "config/density_g_per_ml.csv"
+  non_plant_terms_path: "config/non_plant_terms.yaml"
+  fuzzy_min_score: 0.8
+  llm_threshold: 0.7
+
+meal_types:
+  - breakfast
+  - lunch
+  - dinner
+  - snack
+
+portion_sizes:
+  Beans: 80
+  Berries: 80
+  Other Fruits: 80
+  Cruciferous Vegetables: 80
+  Greens: 80
+  Other Vegetables: 80
+  Flaxseeds or Linseeds: 10
+  Nuts and Seeds: 30
+  Herbs and Spices: 5
+  Whole Grains: 80
+
+daily_dozen_targets:
+  Beans: 3
+  Berries: 1
+  Other Fruits: 3
+  Cruciferous Vegetables: 1
+  Greens: 2
+  Other Vegetables: 2
+  Flaxseeds or Linseeds: 1
+  Nuts and Seeds: 1
+  Herbs and Spices: 1
+  Whole Grains: 3
+
+nutrition:
+  cofid_path: "data/cofid.xlsx"
+  cofid_url: ""
+  usda_api_key: ""
+  coverage_min_ratio: 0.6
+
+llm:
+  provider: "anthropic"
+  model: "claude-sonnet-4-6"
+  api_key: ""
+  batch_size: 5
+
+optimizer:
+  min_rating: 3
+  rating_weight: 1.0
+  diversity_weight: 1.0
+  recency_weight: 0.8
+  slack_weight: 5.0
+  recency_half_life_days: 30
+  calories_daily_min: 1800
+  calories_daily_max: 2400
+  fiber_daily_min: 30
+  snack_optional: false
+  max_recipe_repeats: 2
+  solver_time_limit: 300
+  solver_mip_gap: 0.05
+  planning_horizon_days: 7
+  calories_weekly_min: 12600
+  calories_weekly_max: 16800
+  fiber_weekly_min: 210
+  weekly_group_portions_min: {}
+  include_non_plant: false
