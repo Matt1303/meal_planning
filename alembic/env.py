@@ -44,8 +44,9 @@ def run_migrations_online() -> None:
     section = config.get_section(config.config_ini_section, {})
     connectable = engine_from_config(section, prefix="sqlalchemy.", poolclass=pool.NullPool)
     with connectable.connect() as connection:
-        connection.execute_options(isolation_level="AUTOCOMMIT")
+        connection.execution_options(isolation_level="AUTOCOMMIT")
         connection.execute(_create_schema_sql())
+        connection.commit()
         context.configure(
             connection=connection,
             target_metadata=target_metadata,

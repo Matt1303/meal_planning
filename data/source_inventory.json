@@ -1,6 +1,6 @@
 {
   "local_html": {
-    "path": "180 recipes/Recipes",
+    "path": "recipes_html/Recipes",
     "selectors": {
       "title": "h1",
       "ingredient_lines": "div.ingredients.text p.line",

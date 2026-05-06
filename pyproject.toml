@@ -38,6 +38,7 @@ dev = [
   "syrupy>=4.6",
   "responses>=0.25",
   "testcontainers[postgres]>=4.7",
+  "docker>=7.1",
   "pre-commit>=3.7",
   "types-PyYAML",
   "types-requests",

@@ -55,11 +55,15 @@ def generate_report(
         from meal_planner.report.markdown import render_markdown
 
         md_path = output_dir / f"plan_{plan_run_id}.md"
-        md_path.write_text(render_markdown(report_data))
+        rendered = render_markdown(report_data)
+        md_path.write_text(rendered)
         outputs["md"] = md_path
         legacy = Path("plan_report.md")
-        legacy.write_text(render_markdown(report_data))
-        outputs["legacy_md"] = legacy
+        try:
+            legacy.write_text(rendered)
+            outputs["legacy_md"] = legacy
+        except OSError:
+            pass
 
     if formats.html:
         from meal_planner.report.html import render_html

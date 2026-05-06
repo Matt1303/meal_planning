@@ -99,6 +99,8 @@ def optimize_plan(settings: Settings, *, engine: Engine | None = None) -> Optimi
     if not prepared.recipes:
         raise RuntimeError("no recipes left after preparation")
 
+    settings = _maybe_force_snack_optional(settings, filtered.meal_types, prepared.recipes)
+
     missing_groups = [g for g in settings.daily_dozen_targets if g not in settings.portion_sizes]
 
     with eng.begin() as conn:
@@ -138,7 +140,13 @@ def optimize_plan(settings: Settings, *, engine: Engine | None = None) -> Optimi
             continue
         seconds = time.time() - start
         condition = res.solver.termination_condition
-        if condition == TerminationCondition.optimal:
+        accepted = {
+            TerminationCondition.optimal,
+            TerminationCondition.feasible,
+            TerminationCondition.locallyOptimal,
+            TerminationCondition.globallyOptimal,
+        }
+        if condition in accepted:
             plan = _extract_plan(model, prepared)
             slack = total_slack(model, prepared)
             with eng.begin() as conn:
@@ -178,6 +186,28 @@ def optimize_plan(settings: Settings, *, engine: Engine | None = None) -> Optimi
         log.warning("optimize.infeasible", level=level.name, condition=last_error)
 
     raise RuntimeError(f"all relaxation levels failed: {last_error}")
+
+
+def _maybe_force_snack_optional(
+    settings: Settings, meal_types_df: object, recipes: list[int]
+) -> Settings:
+    if "snack" not in settings.meal_types or settings.optimizer.snack_optional:
+        return settings
+    import pandas as pd
+
+    df = meal_types_df  # pandas DataFrame
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return settings
+    snack_recipes = df[(df["meal_type"] == "snack") & (df["recipe_id"].isin(recipes))]
+    if snack_recipes.empty:
+        log.warning(
+            "optimize.no_snack_recipes_forcing_optional",
+            meal_types=settings.meal_types,
+        )
+        return settings.model_copy(
+            update={"optimizer": settings.optimizer.model_copy(update={"snack_optional": True})}
+        )
+    return settings
 
 
 def _extract_plan(model: Any, prepared: PreparedData) -> dict[int, dict[str, int | None]]:
