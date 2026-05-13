@@ -13,7 +13,7 @@ def create_app() -> Any:
 
     app = FastAPI(title="meal-planner")
 
-    @app.get("/healthz")  # type: ignore[misc]
+    @app.get("/healthz")
     def healthz() -> dict[str, str]:
         engine = get_engine()
         ok = wait_for_db(engine, retries=1, delay=0.5)
@@ -21,11 +21,11 @@ def create_app() -> Any:
             raise HTTPException(status_code=503, detail="db unreachable")
         return {"status": "ok"}
 
-    @app.get("/livez")  # type: ignore[misc]
+    @app.get("/livez")
     def livez() -> dict[str, str]:
         return {"status": "live"}
 
-    @app.get("/plan/latest", response_model=None)  # type: ignore[misc]
+    @app.get("/plan/latest", response_model=None)
     def latest_plan() -> Any:
         from fastapi.responses import HTMLResponse
         from sqlalchemy import text

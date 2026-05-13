@@ -182,6 +182,79 @@ pytest tests/unit                ->  89 passed
 pytest tests/integration         ->  13 passed
 ```
 
+## Round 3 — autonomous follow-up (2026-05-13)
+
+Four of the previously-untested areas were exercised in this round. One more
+bug surfaced and was fixed.
+
+### What ran
+
+| # | Test | Result |
+|---|---|---|
+| 1 | `pre-commit install` + `pre-commit run --all-files` | **fixed** then clean |
+| 2 | FastAPI sidecar — `python -m meal_planner.serve` + `/livez`, `/healthz`, `/plan/latest` | passed |
+| 3 | Prefect 2.16 — direct flow invocation against ephemeral local server | **fixed** then COMPLETED |
+| 4 | Prefect 2.16 — `prefect server start` + `prefect worker start` + deployment run via API | COMPLETED in 7.4s |
+| 5 | GitHub Actions — querying public API for runs on `claude_final` | 0 runs found (workflows present but require PR-to-main or push-to-main to fire) |
+
+### Issues found
+
+#### Issue 10 — Prefect 2.16 unimportable due to `griffe` upgrade (`pyproject.toml`)
+Symptom: `from griffe.dataclasses import Docstring` → `ModuleNotFoundError: No module named 'griffe.dataclasses'`.
+Cause: `griffe` 0.40+ removed the `dataclasses` module; Prefect 2.16 still imports the old path.
+Fix: pinned `griffe<0.40` in the `orchestrate` extras group.
+
+#### Issue 11 — pre-commit caught remaining ruff lints (`alembic/env.py`)
+Symptom: `SIM103 Return the negated condition directly`.
+Fix: simplified `include_object` to a single `return not (...)`.
+
+#### Observed but not fixed
+- Prefect 2.16 `prefect deployment run` CLI is broken — `TypeError: 'NoneType' object is not iterable` in `_load_json_key_values` whether you pass `--params`, `--param`, or nothing. Worked around by POSTing to the `/api/deployments/<id>/create_flow_run` REST endpoint directly. This is a known Prefect 2.16 bug that would be moot after upgrading to Prefect 3.
+
+### Successful Prefect flow run
+
+```
+flow: weekly-meal-plan
+deployment: weekly-meal-plan/weekly-meal-plan
+work pool: default (process)
+flow_run_id: 3901dd50-fed7-45b5-bd7b-f016b9343318
+state: COMPLETED
+total_run_time: 7.45s
+tasks executed: inventory -> ingest -> parse -> nutrition -> optimise -> report
+final state: plan_run persisted, reports/plan_*.md and reports/plan_*.html generated
+```
+
+### Successful FastAPI sidecar
+
+```
+$ python -m meal_planner.serve
+GET /livez            -> 200 {"status":"live"}
+GET /healthz          -> 200 {"status":"ok"}
+GET /plan/latest      -> 200 (text/html, 2,131 bytes, renders latest plan)
+```
+
+### GitHub Actions
+
+Workflows present on the remote `claude_final` branch
+(`build.yml`, `lint.yml`, `migrate.yml`, `security.yml`, `test.yml`). They
+trigger on:
+- `pull_request` (lint, test, migrate, security)
+- `push` to `main` (lint, test, build)
+- `schedule` (security only)
+
+Since `claude_final` is neither `main` nor part of an open PR, no runs have
+fired. To exercise CI, open a PR `claude_final → main` — the lint, test,
+migrate, and security workflows will all run on the PR.
+
+### Things still untested
+
+| Area | Status |
+|---|---|
+| LLM adapters (Anthropic / OpenAI) | waiting for user to drop `LLM_API_KEY` into `.env` |
+| USDA fallback | waiting for `USDA_API_KEY` |
+| CoFID lookup | waiting for `data/cofid.xlsx` |
+| GitHub Actions on a real PR | will run automatically when a PR is opened |
+
 ## Recommended follow-up
 
 1. **Default snack-handling test in unit suite** — the `_maybe_force_snack_optional` path is now important; add an integration test that exercises a corpus with no snack recipes.

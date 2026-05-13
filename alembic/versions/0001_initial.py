@@ -4,10 +4,11 @@ Revision ID: 0001
 Revises:
 Create Date: 2026-05-04
 """
+
 from __future__ import annotations
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 revision: str = "0001"
 down_revision: str | None = None
@@ -37,7 +38,12 @@ def upgrade() -> None:
 
     op.create_table(
         "recipe_source",
-        sa.Column("recipe_id", sa.Integer, sa.ForeignKey(f"{SCHEMA}.recipe.recipe_id", ondelete="CASCADE"), primary_key=True),
+        sa.Column(
+            "recipe_id",
+            sa.Integer,
+            sa.ForeignKey(f"{SCHEMA}.recipe.recipe_id", ondelete="CASCADE"),
+            primary_key=True,
+        ),
         sa.Column("source_path", sa.Text, primary_key=True),
         sa.Column("raw_html", sa.Text),
         sa.Column("ingested_at", sa.DateTime(timezone=True), server_default=sa.text("now()")),
@@ -46,7 +52,12 @@ def upgrade() -> None:
 
     op.create_table(
         "recipe_meal_type",
-        sa.Column("recipe_id", sa.Integer, sa.ForeignKey(f"{SCHEMA}.recipe.recipe_id", ondelete="CASCADE"), primary_key=True),
+        sa.Column(
+            "recipe_id",
+            sa.Integer,
+            sa.ForeignKey(f"{SCHEMA}.recipe.recipe_id", ondelete="CASCADE"),
+            primary_key=True,
+        ),
         sa.Column("meal_type", sa.Text, primary_key=True),
         schema=SCHEMA,
     )
@@ -54,7 +65,12 @@ def upgrade() -> None:
 
     op.create_table(
         "recipe_ingredient",
-        sa.Column("recipe_id", sa.Integer, sa.ForeignKey(f"{SCHEMA}.recipe.recipe_id", ondelete="CASCADE"), primary_key=True),
+        sa.Column(
+            "recipe_id",
+            sa.Integer,
+            sa.ForeignKey(f"{SCHEMA}.recipe.recipe_id", ondelete="CASCADE"),
+            primary_key=True,
+        ),
         sa.Column("raw_text", sa.Text, primary_key=True),
         sa.Column("ingredient_name", sa.Text),
         sa.Column("ingredient_canonical", sa.Text),
@@ -67,9 +83,18 @@ def upgrade() -> None:
         sa.Column("portion_met", sa.Boolean),
         schema=SCHEMA,
     )
-    op.create_index("idx_recipe_ingredient_recipe_id", "recipe_ingredient", ["recipe_id"], schema=SCHEMA)
-    op.create_index("idx_recipe_ingredient_canonical", "recipe_ingredient", ["ingredient_canonical"], schema=SCHEMA)
-    op.create_index("idx_recipe_ingredient_food_group", "recipe_ingredient", ["food_group"], schema=SCHEMA)
+    op.create_index(
+        "idx_recipe_ingredient_recipe_id", "recipe_ingredient", ["recipe_id"], schema=SCHEMA
+    )
+    op.create_index(
+        "idx_recipe_ingredient_canonical",
+        "recipe_ingredient",
+        ["ingredient_canonical"],
+        schema=SCHEMA,
+    )
+    op.create_index(
+        "idx_recipe_ingredient_food_group", "recipe_ingredient", ["food_group"], schema=SCHEMA
+    )
 
     op.create_table(
         "ingredient_nutrition_cache",
@@ -110,7 +135,12 @@ def upgrade() -> None:
 
     op.create_table(
         "recipe_nutrition",
-        sa.Column("recipe_id", sa.Integer, sa.ForeignKey(f"{SCHEMA}.recipe.recipe_id", ondelete="CASCADE"), primary_key=True),
+        sa.Column(
+            "recipe_id",
+            sa.Integer,
+            sa.ForeignKey(f"{SCHEMA}.recipe.recipe_id", ondelete="CASCADE"),
+            primary_key=True,
+        ),
         sa.Column("calories_kcal", sa.Numeric),
         sa.Column("fiber_g", sa.Numeric),
         sa.Column("per_serving_kcal", sa.Numeric),
@@ -123,7 +153,12 @@ def upgrade() -> None:
 
     op.create_table(
         "meal_history",
-        sa.Column("recipe_id", sa.Integer, sa.ForeignKey(f"{SCHEMA}.recipe.recipe_id", ondelete="CASCADE"), primary_key=True),
+        sa.Column(
+            "recipe_id",
+            sa.Integer,
+            sa.ForeignKey(f"{SCHEMA}.recipe.recipe_id", ondelete="CASCADE"),
+            primary_key=True,
+        ),
         sa.Column("meal_type", sa.Text, primary_key=True),
         sa.Column("planned_for", sa.Date, primary_key=True),
         schema=SCHEMA,
@@ -163,7 +198,12 @@ def upgrade() -> None:
 
     op.create_table(
         "plan_meal",
-        sa.Column("plan_run_id", sa.Integer, sa.ForeignKey(f"{SCHEMA}.plan_run.plan_run_id", ondelete="CASCADE"), primary_key=True),
+        sa.Column(
+            "plan_run_id",
+            sa.Integer,
+            sa.ForeignKey(f"{SCHEMA}.plan_run.plan_run_id", ondelete="CASCADE"),
+            primary_key=True,
+        ),
         sa.Column("day", sa.Integer, primary_key=True),
         sa.Column("meal_type", sa.Text, primary_key=True),
         sa.Column("recipe_id", sa.Integer, sa.ForeignKey(f"{SCHEMA}.recipe.recipe_id")),
@@ -172,7 +212,12 @@ def upgrade() -> None:
 
     op.create_table(
         "plan_day",
-        sa.Column("plan_run_id", sa.Integer, sa.ForeignKey(f"{SCHEMA}.plan_run.plan_run_id", ondelete="CASCADE"), primary_key=True),
+        sa.Column(
+            "plan_run_id",
+            sa.Integer,
+            sa.ForeignKey(f"{SCHEMA}.plan_run.plan_run_id", ondelete="CASCADE"),
+            primary_key=True,
+        ),
         sa.Column("day", sa.Integer, primary_key=True),
         sa.Column("kcal", sa.Numeric),
         sa.Column("fiber_g", sa.Numeric),
@@ -181,7 +226,12 @@ def upgrade() -> None:
 
     op.create_table(
         "plan_day_group",
-        sa.Column("plan_run_id", sa.Integer, sa.ForeignKey(f"{SCHEMA}.plan_run.plan_run_id", ondelete="CASCADE"), primary_key=True),
+        sa.Column(
+            "plan_run_id",
+            sa.Integer,
+            sa.ForeignKey(f"{SCHEMA}.plan_run.plan_run_id", ondelete="CASCADE"),
+            primary_key=True,
+        ),
         sa.Column("day", sa.Integer, primary_key=True),
         sa.Column("food_group", sa.Text, primary_key=True),
         sa.Column("daily_count", sa.Integer),

@@ -21,9 +21,7 @@ config.set_main_option("sqlalchemy.url", DB_URL)
 
 
 def include_object(obj: object, name: str | None, type_: str, *_: object) -> bool:
-    if type_ == "table" and name in {"recipes", "processed_recipes", "weekly_meal_plan"}:
-        return False
-    return True
+    return not (type_ == "table" and name in {"recipes", "processed_recipes", "weekly_meal_plan"})
 
 
 def run_migrations_offline() -> None:
