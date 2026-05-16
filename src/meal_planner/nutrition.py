@@ -57,29 +57,59 @@ def _clean_for_fuzzy(text: str) -> str:
 def _load_cofid(path: Path | None) -> pd.DataFrame | None:
     if not path or not path.exists():
         return None
-    if path.suffix.lower() in {".xlsx", ".xls"}:
+    if path.suffix.lower() not in {".xlsx", ".xls"}:
+        return pd.read_csv(path)
+    xl = pd.ExcelFile(path)
+    candidates: list[tuple[int, pd.DataFrame]] = []
+    for sheet in xl.sheet_names:
+        df = pd.read_excel(path, sheet_name=sheet)
+        if df.empty:
+            continue
+        name_col, nutrient_cols = _guess_columns(df)
+        if name_col and nutrient_cols:
+            candidates.append((len(nutrient_cols), df))
+    if not candidates:
         return pd.read_excel(path)
-    return pd.read_csv(path)
+    candidates.sort(key=lambda c: c[0], reverse=True)
+    return candidates[0][1]
 
 
 def _guess_columns(df: pd.DataFrame) -> tuple[str | None, dict[str, str]]:
     cols = {str(c).lower(): str(c) for c in df.columns}
     name_col: str | None = None
     nutrient_cols: dict[str, str] = {}
+    fiber_aoac: str | None = None
+    fiber_nsp: str | None = None
     for key, original in cols.items():
-        if name_col is None and ("food name" in key or key == "foodname" or key == "name"):
+        if name_col is None and ("food name" in key or key in {"foodname", "name"}):
             name_col = original
         if "kcal" in key and "kcal" not in nutrient_cols:
             nutrient_cols["kcal"] = original
-        if ("fibre" in key or "fiber" in key) and "fiber" not in nutrient_cols:
+        if "aoac" in key and "fibre" in key:
+            fiber_aoac = original
+        elif key.startswith("nsp") or " nsp " in f" {key} ":
+            fiber_nsp = original
+        elif (
+            ("fibre" in key or "fiber" in key)
+            and "fiber" not in nutrient_cols
+            and "aoac" not in key
+        ):
             nutrient_cols["fiber"] = original
         if "protein" in key and "protein" not in nutrient_cols:
             nutrient_cols["protein"] = original
-        if "fat" in key and "fat" not in nutrient_cols:
+        if "fat (g)" in key and "fat" not in nutrient_cols:
             nutrient_cols["fat"] = original
         if "carbohydrate" in key and "carbs" not in nutrient_cols:
             nutrient_cols["carbs"] = original
+    if "fiber" not in nutrient_cols:
+        if fiber_aoac:
+            nutrient_cols["fiber"] = fiber_aoac
+        elif fiber_nsp:
+            nutrient_cols["fiber"] = fiber_nsp
     return name_col, nutrient_cols
+
+
+_COFID_MISSING = {"n", "tr", "-", ""}
 
 
 def _row_value(row: pd.Series, col: str | None) -> Decimal | None:
@@ -88,26 +118,88 @@ def _row_value(row: pd.Series, col: str | None) -> Decimal | None:
     value = row.get(col)
     if value is None or pd.isna(value):
         return None
+    text = str(value).strip().lower()
+    if text in _COFID_MISSING:
+        return None
     try:
-        return Decimal(str(value))
+        return Decimal(text)
     except (ArithmeticError, ValueError):
         return None
+
+
+def _base_name(name: str) -> str:
+    parts = [p.strip() for p in name.split(",") if p.strip()]
+    if not parts:
+        return name
+    head = parts[0]
+    if len(parts) >= 2:
+        second = parts[1]
+        if second and not any(
+            second.startswith(prefix)
+            for prefix in ("raw", "dried", "cooked", "boiled", "fresh", "frozen")
+        ):
+            head = f"{head} {second}"
+    return head
+
+
+_PREFERRED_QUALIFIERS = ("raw", "dried", "fresh", "uncooked")
+_DEMOTED_TERMS = (
+    "with",
+    "stuffed",
+    "bhaji",
+    "curry",
+    "pie",
+    "pilau",
+    "salad",
+    "casserole",
+    "soup",
+    "stew",
+    "fried",
+    "roasted",
+    "battered",
+    "in cream",
+    "in batter",
+    "in sauce",
+    "and ",
+    ", and",
+    "homemade",
+)
 
 
 def _lookup_cofid(df: pd.DataFrame, ingredient: str) -> NutritionResult | None:
     name_col, nutrient_cols = _guess_columns(df)
     if not name_col:
         return None
-    haystack = df[name_col].astype(str).str.lower().tolist()
+    names = df[name_col].astype(str).str.lower().tolist()
+    base_names = [_base_name(name) for name in names]
     cleaned = _clean_for_fuzzy(ingredient)
-    match = process.extractOne(cleaned, haystack)
-    if not match:
+    if not cleaned:
         return None
-    name_match, score, idx = match
-    score_value = float(score or 0)
-    if score_value < 80:
+
+    raw_candidates: list[tuple[str, float, int]] = process.extract(
+        cleaned, base_names, limit=20, score_cutoff=70
+    )
+    if not raw_candidates:
         return None
-    row = df.iloc[int(idx)]
+
+    best_idx: int | None = None
+    best_score = -1.0
+    for _, score, idx in raw_candidates:
+        idx_int = int(idx)
+        full = names[idx_int]
+        adj = float(score)
+        if any(term in full for term in _DEMOTED_TERMS):
+            adj -= 25
+        if any(qual in full for qual in _PREFERRED_QUALIFIERS):
+            adj += 5
+        adj -= 0.01 * len(full)
+        if adj > best_score:
+            best_score = adj
+            best_idx = idx_int
+
+    if best_idx is None or best_score < 60:
+        return None
+    row = df.iloc[best_idx]
     return NutritionResult(
         kcal_per_100g=_row_value(row, nutrient_cols.get("kcal")),
         fiber_g_per_100g=_row_value(row, nutrient_cols.get("fiber")),
@@ -115,8 +207,8 @@ def _lookup_cofid(df: pd.DataFrame, ingredient: str) -> NutritionResult | None:
         fat_g_per_100g=_row_value(row, nutrient_cols.get("fat")),
         carbs_g_per_100g=_row_value(row, nutrient_cols.get("carbs")),
         source="cofid",
-        match_score=Decimal(str(score_value)),
-        match_source_name=str(name_match),
+        match_score=Decimal(str(best_score)),
+        match_source_name=str(names[best_idx]),
     )
 
 
@@ -127,7 +219,7 @@ def _lookup_usda(api_key: str, ingredient: str) -> NutritionResult | None:
     params: dict[str, Any] = {
         "api_key": api_key,
         "query": ingredient,
-        "pageSize": 1,
+        "pageSize": 10,
         "dataType": "Foundation,SR Legacy",
     }
     last_error: Exception | None = None
@@ -147,11 +239,40 @@ def _lookup_usda(api_key: str, ingredient: str) -> NutritionResult | None:
     return None
 
 
+def _pick_usda_food(foods: list[dict[str, Any]], ingredient: str) -> dict[str, Any] | None:
+    cleaned = _clean_for_fuzzy(ingredient)
+    if not foods:
+        return None
+    descriptions = [_clean_for_fuzzy(str(f.get("description", ""))) for f in foods]
+    raw_candidates: list[tuple[str, float, int]] = process.extract(
+        cleaned, descriptions, limit=len(descriptions), score_cutoff=50
+    )
+    if not raw_candidates:
+        return foods[0]
+    best_idx: int | None = None
+    best_score = -1.0
+    for _, score, idx in raw_candidates:
+        idx_int = int(idx)
+        description = descriptions[idx_int]
+        adj = float(score)
+        if any(term in description for term in _DEMOTED_TERMS):
+            adj -= 25
+        if any(qual in description for qual in _PREFERRED_QUALIFIERS):
+            adj += 5
+        adj -= 0.1 * len(description)
+        if adj > best_score:
+            best_score = adj
+            best_idx = idx_int
+    if best_idx is None:
+        return foods[0]
+    return foods[best_idx]
+
+
 def _parse_usda(data: Any, ingredient: str) -> NutritionResult | None:
     foods = data.get("foods") if isinstance(data, dict) else None
     if not foods:
         return None
-    first = foods[0]
+    first = _pick_usda_food(foods, ingredient) or foods[0]
     description = str(first.get("description", ""))
     nutrients_raw = first.get("foodNutrients", [])
     nutrients: dict[str, Decimal] = {}

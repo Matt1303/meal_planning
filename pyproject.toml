@@ -51,7 +51,7 @@ report = [
   "jinja2>=3.1",
 ]
 llm-openai = ["openai>=1.50"]
-llm-anthropic = ["anthropic>=0.34"]
+llm-anthropic = ["anthropic>=0.70"]
 orchestrate = ["prefect>=2.16,<3", "griffe<0.40"]
 serve = ["fastapi>=0.110", "uvicorn>=0.30"]
 

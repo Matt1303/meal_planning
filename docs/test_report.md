@@ -255,6 +255,87 @@ migrate, and security workflows will all run on the PR.
 | CoFID lookup | waiting for `data/cofid.xlsx` |
 | GitHub Actions on a real PR | will run automatically when a PR is opened |
 
+## Round 4 — Anthropic + CoFID + USDA wired (2026-05-16)
+
+Credentials and data were dropped into `.env` and `data/cofid.xlsx`. Four
+bugs surfaced and were fixed; the headline result is the full pipeline now
+achieves **96.6% nutrition coverage**, vs 0% in earlier rounds, and the
+optimiser solves with **slack 584** vs ~25,800 previously.
+
+### Bugs found
+
+#### Issue 12 — Anthropic SDK 0.34 vs current `httpx` (`pyproject.toml`)
+Symptom: `TypeError: Client.__init__() got an unexpected keyword argument 'proxies'`.
+Cause: `anthropic 0.34.2` passes a `proxies=` kwarg into `httpx.Client` which newer httpx removed.
+Fix: bumped `llm-anthropic` extra to `anthropic>=0.70`.
+
+#### Issue 13 — CoFID multi-sheet workbook, wrong sheet read (`src/meal_planner/nutrition.py`)
+Symptom: `_load_cofid` returned only the "List of tables" worksheet (15 rows, 2 columns), so every ingredient lookup failed.
+Fix: `_load_cofid` now scans every sheet and picks the one whose columns yield both a `name_col` and the most nutrient columns. For CoFID 2021 this finds `1.3 Proximates` (2,889 food rows, 47 columns).
+
+#### Issue 14 — CoFID uses string sentinels for missing data (`src/meal_planner/nutrition.py`)
+Symptom: known foods like "Curly kale, raw" came back with `fibre=None` even though the row had a value.
+Cause: AOAC fibre column uses the literal string `"N"` for not-measured. Our `pd.isna` check only catches `NaN`.
+Fix: `_row_value` now also treats `"N"`, `"Tr"`, `"-"`, `""` as missing. Also extended `_guess_columns` to prefer the AOAC fibre column and fall back to NSP (the older UK fibre measure).
+
+#### Issue 15 — Fuzzy matches picked composite dishes over raw ingredients (`src/meal_planner/nutrition.py`)
+Symptom: `oats → buckwheat groats`, `spinach → cabbage and spinach bhaji`, `lentils → aubergine stuffed with lentils`.
+Cause: rapidfuzz WRatio scoring against full food names rewarded substring containment in long composite-dish names.
+Fix: introduced `_base_name(name)` that builds match candidates from the first two comma-separated tokens (CoFID convention: `"<food>, <variant>, <prep>, ..."`); added a `_PREFERRED_QUALIFIERS` boost for `raw / dried / fresh / uncooked`; added a `_DEMOTED_TERMS` penalty for `with / stuffed / curry / pilau / salad / fried / roasted / soup / stew / homemade`; applied a small length penalty as a tie-breaker. Same scoring is now applied to USDA results too (bumped USDA `pageSize` from 1 to 10 and ranked locally).
+
+### LLM-friendlier env var fallback (`src/meal_planner/llm/factory.py`)
+The Anthropic adapter now reads `LLM_API_KEY` first, then falls back to `ANTHROPIC_API_KEY`; the OpenAI adapter similarly falls back to `OPENAI_API_KEY`. The user dropped `ANTHROPIC_API_KEY` and `USDA_API_KEY` into `.env`; the code finds both automatically without renaming.
+
+### Targeted smoke tests
+
+```
+Anthropic LLM adapter on 5 hard lines:
+  1 small red onion, finely chopped     -> red onion       (Other Vegetables, 1 small)
+  200g tenderstem broccoli               -> tenderstem broccoli (Cruciferous Vegetables, 200 g)
+  1 tbsp gochujang paste                 -> gochujang paste (Herbs and Spices, 1 tbsp)
+  2 sheets nori                          -> nori             (Greens, 2 sheets)
+  100g vermicelli noodles                -> vermicelli noodles (Whole Grains, 100 g)
+  (5/5 parsed, 0 invalid_json)
+
+CoFID lookups (after fixes):
+  kale -> curly kale, raw            kcal=33
+  brown rice -> rice, brown, basmati, raw    kcal=355
+  oats -> porridge oats, unfortified  kcal=381  (fibre=7.8 g)
+  blueberries -> blueberries          kcal=40
+  lentils -> lentils, red, split, dried, raw  kcal=311
+  broccoli -> broccoli, green, raw    kcal=34
+  garlic -> garlic, raw               kcal=98
+  quinoa -> quinoa, raw               kcal=309
+  kidney beans -> beans, red kidney, dried, raw  kcal=266
+
+USDA fallback (after pageSize=10 + ranking):
+  kale -> Kale, raw          kcal=35
+  miso -> Miso               kcal=198 fibre=5.4
+  chia seeds -> Chia seeds, dry, raw     kcal=517
+  tempeh -> Tempeh           kcal=192
+```
+
+### Full pipeline (Round 4)
+
+```
+ingest:    180 files -> 180 recipes, 2,121 ingredient lines, 83 non-plant filtered
+parse:     2,121 rows; 560 fell through to Anthropic; 0 invalid_json; ~10 minutes total
+nutrition: 1,098 items, 1,061 covered = 96.6% (coverage gate threshold is 60% -> passes)
+optimise:  relaxation_level=0 (strict), 300s (hit time limit -> returned 'feasible'),
+           slack_total = 584 (vs 25,791 before)
+plan:      plan_run_id=1, 84 unique ingredients (vs 55 before),
+           total_kcal = 13,688 / week (avg ~1,956/day),
+           total_fiber = 186 g / week (avg ~26/day),
+           daily Dozen violations = 98 (still some, mostly due to unique-ingredient-per-day rule),
+           non-plant picks in plan: 0
+recipe_nutrition: 150 recipes with kcal>0, avg 1,415 kcal / 20.1 g fibre per recipe
+report:    reports/plan_1.md, reports/plan_1.html generated; legacy plan_report.md written
+```
+
+### Still outstanding
+
+Adding 7 entries to `config/ingredient_synonyms.csv` (flax↔flaxseed, chickpeas↔chick peas) would push USDA/CoFID match quality further, but is no longer load-bearing on the coverage gate.
+
 ## Recommended follow-up
 
 1. **Default snack-handling test in unit suite** — the `_maybe_force_snack_optional` path is now important; add an integration test that exercises a corpus with no snack recipes.
