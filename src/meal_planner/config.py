@@ -57,10 +57,14 @@ class OptimizerSettings(BaseModel):
     diversity_weight: float = 1.0
     recency_weight: float = 0.8
     slack_weight: float = 5.0
+    spacing_weight: float = 2.0
     recency_half_life_days: int = Field(default=30, gt=0)
     calories_daily_min: int | None = 1800
     calories_daily_max: int | None = 2400
     fiber_daily_min: int | None = 30
+    fiber_daily_max: int | None = None
+    protein_daily_min: int | None = None
+    protein_daily_max: int | None = None
     snack_optional: bool = False
     max_recipe_repeats: int = Field(default=2, ge=1)
     solver_time_limit: int = Field(default=300, gt=0)
@@ -69,8 +73,12 @@ class OptimizerSettings(BaseModel):
     calories_weekly_min: int | None = 12_600
     calories_weekly_max: int | None = 16_800
     fiber_weekly_min: int | None = 210
+    protein_weekly_min: int | None = None
     weekly_group_portions_min: dict[str, float] = Field(default_factory=dict)
     include_non_plant: bool = False
+    spacing_penalty_by_gap: dict[int, float] = Field(
+        default_factory=lambda: {1: 1.0, 2: 0.3, 3: 0.1}
+    )
 
     @model_validator(mode="after")
     def _validate_ranges(self) -> OptimizerSettings:
@@ -86,6 +94,18 @@ class OptimizerSettings(BaseModel):
             and self.calories_weekly_min > self.calories_weekly_max
         ):
             raise ValueError("calories_weekly_min must be <= calories_weekly_max")
+        if (
+            self.fiber_daily_min is not None
+            and self.fiber_daily_max is not None
+            and self.fiber_daily_min > self.fiber_daily_max
+        ):
+            raise ValueError("fiber_daily_min must be <= fiber_daily_max")
+        if (
+            self.protein_daily_min is not None
+            and self.protein_daily_max is not None
+            and self.protein_daily_min > self.protein_daily_max
+        ):
+            raise ValueError("protein_daily_min must be <= protein_daily_max")
         return self
 
 

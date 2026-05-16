@@ -54,6 +54,7 @@ llm-openai = ["openai>=1.50"]
 llm-anthropic = ["anthropic>=0.70"]
 orchestrate = ["prefect>=2.16,<3", "griffe<0.40"]
 serve = ["fastapi>=0.110", "uvicorn>=0.30"]
+ui = ["streamlit>=1.40"]
 
 [project.scripts]
 meal-planner = "meal_planner.cli:app"

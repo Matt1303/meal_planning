@@ -39,7 +39,10 @@ def load_inputs(engine: Engine, *, include_non_plant: bool) -> ModelInputs:
         engine,
     )
     nutrition = pd.read_sql(
-        "SELECT recipe_id, per_serving_kcal, per_serving_fiber_g FROM meal_planning.recipe_nutrition",
+        """
+        SELECT recipe_id, per_serving_kcal, per_serving_fiber_g, per_serving_protein_g
+        FROM meal_planning.recipe_nutrition
+        """,
         engine,
     )
     history = pd.read_sql(
@@ -89,6 +92,7 @@ class PreparedData:
     rating: dict[int, float]
     kcal: dict[int, float]
     fiber: dict[int, float]
+    protein: dict[int, float]
     recency: dict[int, float]
     allowed_meal: dict[tuple[int, str], int]
     portion_met: dict[tuple[int, str], int]
@@ -122,9 +126,19 @@ def prepare(inputs: ModelInputs, settings: Settings) -> PreparedData:
             else 0.0
             for r in recipes_list
         }
+        if "per_serving_protein_g" in nut.columns:
+            protein = {
+                r: float(nut.loc[r, "per_serving_protein_g"])
+                if r in nut.index and not pd.isna(nut.loc[r, "per_serving_protein_g"])
+                else 0.0
+                for r in recipes_list
+            }
+        else:
+            protein = dict.fromkeys(recipes_list, 0.0)
     else:
         kcal = dict.fromkeys(recipes_list, 0.0)
         fiber = dict.fromkeys(recipes_list, 0.0)
+        protein = dict.fromkeys(recipes_list, 0.0)
 
     history_map: dict[int, date | datetime | None] = {}
     for _, row in inputs.history.iterrows():
@@ -187,6 +201,7 @@ def prepare(inputs: ModelInputs, settings: Settings) -> PreparedData:
         rating=rating,
         kcal=kcal,
         fiber=fiber,
+        protein=protein,
         recency=recency,
         allowed_meal=allowed_meal,
         portion_met=portion_met,

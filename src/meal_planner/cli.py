@@ -142,6 +142,38 @@ def health() -> None:
         raise typer.Exit(code=1)
 
 
+@app.command("ui")
+def ui(
+    port: int = typer.Option(8501, "--port"),
+    address: str = typer.Option("127.0.0.1", "--address"),
+) -> None:
+    import os
+    import subprocess
+    import sys
+    from importlib.util import find_spec
+
+    if find_spec("streamlit") is None:
+        typer.echo('streamlit is not installed. Run: pip install -e ".[ui]"', err=True)
+        raise typer.Exit(code=1)
+
+    repo_root = Path(__file__).resolve().parents[2]
+    app_path = repo_root / "src" / "meal_planner" / "ui" / "app.py"
+    cmd = [
+        sys.executable,
+        "-m",
+        "streamlit",
+        "run",
+        str(app_path),
+        "--server.address",
+        address,
+        "--server.port",
+        str(port),
+    ]
+    env = os.environ.copy()
+    env.setdefault("PYTHONPATH", str(repo_root / "src"))
+    raise typer.Exit(code=subprocess.run(cmd, env=env, check=False).returncode)
+
+
 @config_app.command("validate")
 def config_validate(path: Path = typer.Option(Path("config/pipeline.yaml"), "--config")) -> None:
     Settings.load(path)

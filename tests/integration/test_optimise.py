@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -142,3 +143,86 @@ def test_no_recipe_appears_twice_on_same_day(
         assert len(picked) == len(
             set(picked)
         ), f"day {day}: recipe appears in more than one slot: {meals}"
+
+
+def _count_consecutive_repeats(result_plan: dict[int, dict[str, int | None]]) -> int:
+    appearances: dict[int, list[int]] = {}
+    for day, meals in result_plan.items():
+        for recipe_id in meals.values():
+            if recipe_id is None:
+                continue
+            appearances.setdefault(recipe_id, []).append(day)
+    count = 0
+    for days in appearances.values():
+        sorted_days = sorted(days)
+        for d1, d2 in pairwise(sorted_days):
+            if d2 - d1 == 1:
+                count += 1
+    return count
+
+
+@pytest.mark.integration
+def test_spacing_penalty_reduces_consecutive_repeats(
+    clean_db: Engine, settings_with_fixtures: Settings
+) -> None:
+    ingest_local_html(settings_with_fixtures, engine=clean_db)
+    parse_ingredients(settings_with_fixtures, engine=clean_db)
+    _seed_recipe_nutrition(clean_db)
+
+    no_spacing = settings_with_fixtures.model_copy(
+        update={
+            "optimizer": settings_with_fixtures.optimizer.model_copy(update={"spacing_weight": 0.0})
+        }
+    )
+    with_spacing = settings_with_fixtures.model_copy(
+        update={
+            "optimizer": settings_with_fixtures.optimizer.model_copy(
+                update={
+                    "spacing_weight": 20.0,
+                    "spacing_penalty_by_gap": {1: 10.0, 2: 1.0, 3: 0.1},
+                }
+            )
+        }
+    )
+
+    base = optimize_plan(no_spacing, engine=clean_db)
+    nudged = optimize_plan(with_spacing, engine=clean_db)
+    base_consecutive = _count_consecutive_repeats(base.plan)
+    nudged_consecutive = _count_consecutive_repeats(nudged.plan)
+    assert nudged_consecutive <= base_consecutive, (
+        f"spacing penalty did not reduce consecutive repeats: "
+        f"base={base_consecutive} nudged={nudged_consecutive}"
+    )
+
+
+@pytest.mark.integration
+def test_protein_daily_min_constraint_used(
+    clean_db: Engine, settings_with_fixtures: Settings
+) -> None:
+    ingest_local_html(settings_with_fixtures, engine=clean_db)
+    parse_ingredients(settings_with_fixtures, engine=clean_db)
+    with clean_db.begin() as conn:
+        rows = conn.execute(text("SELECT recipe_id FROM meal_planning.recipe")).fetchall()
+        for row in rows:
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO meal_planning.recipe_nutrition
+                        (recipe_id, calories_kcal, fiber_g,
+                         per_serving_kcal, per_serving_fiber_g, per_serving_protein_g)
+                    VALUES (:rid, 2000, 30, 500, 7.5, 25)
+                    ON CONFLICT (recipe_id) DO NOTHING
+                    """
+                ),
+                {"rid": int(row[0])},
+            )
+    with_protein = settings_with_fixtures.model_copy(
+        update={
+            "optimizer": settings_with_fixtures.optimizer.model_copy(
+                update={"protein_daily_min": 60}
+            )
+        }
+    )
+    result = optimize_plan(with_protein, engine=clean_db)
+    assert result.solver_status
+    assert result.relaxation_level == 0

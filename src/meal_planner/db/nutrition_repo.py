@@ -99,14 +99,19 @@ def upsert_recipe_nutrition(
     protein_g: Decimal | None,
     fat_g: Decimal | None,
     carbs_g: Decimal | None,
+    per_serving_protein_g: Decimal | None = None,
+    per_serving_fat_g: Decimal | None = None,
+    per_serving_carbs_g: Decimal | None = None,
 ) -> None:
     conn.execute(
         text(
             """
             INSERT INTO meal_planning.recipe_nutrition
                 (recipe_id, calories_kcal, fiber_g, per_serving_kcal, per_serving_fiber_g,
-                 protein_g, fat_g, carbs_g)
-            VALUES (:rid, :kcal, :fiber, :pkcal, :pfiber, :protein, :fat, :carbs)
+                 protein_g, fat_g, carbs_g,
+                 per_serving_protein_g, per_serving_fat_g, per_serving_carbs_g)
+            VALUES (:rid, :kcal, :fiber, :pkcal, :pfiber, :protein, :fat, :carbs,
+                    :p_protein, :p_fat, :p_carbs)
             ON CONFLICT (recipe_id) DO UPDATE SET
                 calories_kcal = EXCLUDED.calories_kcal,
                 fiber_g = EXCLUDED.fiber_g,
@@ -114,7 +119,10 @@ def upsert_recipe_nutrition(
                 per_serving_fiber_g = EXCLUDED.per_serving_fiber_g,
                 protein_g = EXCLUDED.protein_g,
                 fat_g = EXCLUDED.fat_g,
-                carbs_g = EXCLUDED.carbs_g
+                carbs_g = EXCLUDED.carbs_g,
+                per_serving_protein_g = EXCLUDED.per_serving_protein_g,
+                per_serving_fat_g = EXCLUDED.per_serving_fat_g,
+                per_serving_carbs_g = EXCLUDED.per_serving_carbs_g
             """
         ),
         {
@@ -126,6 +134,9 @@ def upsert_recipe_nutrition(
             "protein": protein_g,
             "fat": fat_g,
             "carbs": carbs_g,
+            "p_protein": per_serving_protein_g,
+            "p_fat": per_serving_fat_g,
+            "p_carbs": per_serving_carbs_g,
         },
     )
 

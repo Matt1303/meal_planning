@@ -396,6 +396,9 @@ def enrich_nutrition(
             servings = servings_map.get(recipe_id, Decimal(1)) or Decimal(1)
             per_kcal = agg["kcal"]
             per_fiber = agg["fiber"]
+            per_protein = agg["protein"]
+            per_fat = agg["fat"]
+            per_carbs = agg["carbs"]
             upsert_recipe_nutrition(
                 conn,
                 recipe_id=recipe_id,
@@ -403,9 +406,12 @@ def enrich_nutrition(
                 fiber_g=per_fiber * servings,
                 per_serving_kcal=per_kcal,
                 per_serving_fiber_g=per_fiber,
-                protein_g=agg["protein"],
-                fat_g=agg["fat"],
-                carbs_g=agg["carbs"],
+                protein_g=per_protein * servings,
+                fat_g=per_fat * servings,
+                carbs_g=per_carbs * servings,
+                per_serving_protein_g=per_protein,
+                per_serving_fat_g=per_fat,
+                per_serving_carbs_g=per_carbs,
             )
 
         coverage = (covered / total) if total else 0.0

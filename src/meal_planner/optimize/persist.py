@@ -51,7 +51,11 @@ def write_plan(settings: Settings, result: OptimizeResult, *, engine: Engine | N
         )
 
         nutrition = pd.read_sql(
-            "SELECT recipe_id, per_serving_kcal, per_serving_fiber_g FROM meal_planning.recipe_nutrition",
+            """
+            SELECT recipe_id, per_serving_kcal, per_serving_fiber_g,
+                   per_serving_protein_g, per_serving_fat_g, per_serving_carbs_g
+            FROM meal_planning.recipe_nutrition
+            """,
             conn,
         ).set_index("recipe_id")
 
@@ -72,6 +76,9 @@ def write_plan(settings: Settings, result: OptimizeResult, *, engine: Engine | N
         for day, meals in result.plan.items():
             day_kcal = Decimal(0)
             day_fiber = Decimal(0)
+            day_protein = Decimal(0)
+            day_fat = Decimal(0)
+            day_carbs = Decimal(0)
             selected = [r for r in meals.values() if r is not None]
             for meal_type, recipe_id in meals.items():
                 insert_plan_meal(
@@ -82,15 +89,39 @@ def write_plan(settings: Settings, result: OptimizeResult, *, engine: Engine | N
                     recipe_id=recipe_id,
                 )
             for r in selected:
-                if r in nutrition.index:
-                    kcal_value = nutrition.loc[r, "per_serving_kcal"]
-                    fiber_value = nutrition.loc[r, "per_serving_fiber_g"]
-                    if kcal_value is not None and not pd.isna(kcal_value):
-                        day_kcal += Decimal(str(kcal_value))
-                    if fiber_value is not None and not pd.isna(fiber_value):
-                        day_fiber += Decimal(str(fiber_value))
+                if r not in nutrition.index:
+                    continue
+                row = nutrition.loc[r]
+                for column, accumulator in (
+                    ("per_serving_kcal", "day_kcal"),
+                    ("per_serving_fiber_g", "day_fiber"),
+                    ("per_serving_protein_g", "day_protein"),
+                    ("per_serving_fat_g", "day_fat"),
+                    ("per_serving_carbs_g", "day_carbs"),
+                ):
+                    value = row.get(column)
+                    if value is None or pd.isna(value):
+                        continue
+                    increment = Decimal(str(value))
+                    if accumulator == "day_kcal":
+                        day_kcal += increment
+                    elif accumulator == "day_fiber":
+                        day_fiber += increment
+                    elif accumulator == "day_protein":
+                        day_protein += increment
+                    elif accumulator == "day_fat":
+                        day_fat += increment
+                    elif accumulator == "day_carbs":
+                        day_carbs += increment
             insert_plan_day(
-                conn, plan_run_id=plan_run_id, day=day, kcal=day_kcal, fiber_g=day_fiber
+                conn,
+                plan_run_id=plan_run_id,
+                day=day,
+                kcal=day_kcal,
+                fiber_g=day_fiber,
+                protein_g=day_protein,
+                fat_g=day_fat,
+                carbs_g=day_carbs,
             )
             total_kcal += day_kcal
             total_fiber += day_fiber

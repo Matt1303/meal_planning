@@ -22,8 +22,10 @@ from meal_planner.optimize.data import PreparedData
 class ModelOptions:
     enforce_daily_kcal: bool
     enforce_daily_fiber: bool
+    enforce_daily_protein: bool
     enforce_weekly_kcal: bool
     enforce_weekly_fiber: bool
+    enforce_weekly_protein: bool
     enforce_group_targets: bool
     enforce_weekly_groups: bool
 
@@ -51,15 +53,31 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
     if options.enforce_daily_kcal and opt.calories_daily_max is not None:
         model.slack_cal_max = Var(model.D, domain=NonNegativeReals)
     if options.enforce_daily_fiber and opt.fiber_daily_min is not None:
-        model.slack_fiber = Var(model.D, domain=NonNegativeReals)
+        model.slack_fiber_min = Var(model.D, domain=NonNegativeReals)
+    if options.enforce_daily_fiber and opt.fiber_daily_max is not None:
+        model.slack_fiber_max = Var(model.D, domain=NonNegativeReals)
+    if options.enforce_daily_protein and opt.protein_daily_min is not None:
+        model.slack_protein_min = Var(model.D, domain=NonNegativeReals)
+    if options.enforce_daily_protein and opt.protein_daily_max is not None:
+        model.slack_protein_max = Var(model.D, domain=NonNegativeReals)
     if options.enforce_weekly_kcal and opt.calories_weekly_min is not None:
         model.slack_weekly_cal_min = Var(domain=NonNegativeReals)
     if options.enforce_weekly_kcal and opt.calories_weekly_max is not None:
         model.slack_weekly_cal_max = Var(domain=NonNegativeReals)
     if options.enforce_weekly_fiber and opt.fiber_weekly_min is not None:
         model.slack_weekly_fiber = Var(domain=NonNegativeReals)
+    if options.enforce_weekly_protein and opt.protein_weekly_min is not None:
+        model.slack_weekly_protein = Var(domain=NonNegativeReals)
     if opt.snack_optional and "snack" in prepared.meal_types:
         model.slack_snack = Var(model.D, domain=NonNegativeReals)
+
+    pairs = [(d1, d2) for d1 in prepared.days for d2 in prepared.days if d1 < d2]
+    penalty_by_gap = opt.spacing_penalty_by_gap or {}
+    relevant_pairs = [(d1, d2) for d1, d2 in pairs if penalty_by_gap.get(d2 - d1, 0.0) > 0]
+    spacing_active = opt.spacing_weight > 0 and bool(relevant_pairs) and opt.max_recipe_repeats > 1
+    if spacing_active:
+        model.PAIRS = Set(initialize=relevant_pairs, dimen=2)
+        model.recipe_pair = Var(model.R, model.PAIRS, domain=Binary)
 
     snack_optional = opt.snack_optional and "snack" in prepared.meal_types
 
@@ -162,11 +180,47 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
 
         def fiber_min_rule(m: Any, d: int) -> Any:
             return (
-                sum(fiber[r] * m.x[r, d, meal] for r in m.R for meal in m.M) + m.slack_fiber[d]
+                sum(fiber[r] * m.x[r, d, meal] for r in m.R for meal in m.M) + m.slack_fiber_min[d]
                 >= opt.fiber_daily_min
             )
 
         model.fiber_min = Constraint(model.D, rule=fiber_min_rule)
+
+    if options.enforce_daily_fiber and opt.fiber_daily_max is not None:
+        fiber_d_max = prepared.fiber
+
+        def fiber_max_rule(m: Any, d: int) -> Any:
+            return (
+                sum(fiber_d_max[r] * m.x[r, d, meal] for r in m.R for meal in m.M)
+                - m.slack_fiber_max[d]
+                <= opt.fiber_daily_max
+            )
+
+        model.fiber_max = Constraint(model.D, rule=fiber_max_rule)
+
+    if options.enforce_daily_protein and opt.protein_daily_min is not None:
+        protein = prepared.protein
+
+        def protein_min_rule(m: Any, d: int) -> Any:
+            return (
+                sum(protein[r] * m.x[r, d, meal] for r in m.R for meal in m.M)
+                + m.slack_protein_min[d]
+                >= opt.protein_daily_min
+            )
+
+        model.protein_min = Constraint(model.D, rule=protein_min_rule)
+
+    if options.enforce_daily_protein and opt.protein_daily_max is not None:
+        protein_d_max = prepared.protein
+
+        def protein_max_rule(m: Any, d: int) -> Any:
+            return (
+                sum(protein_d_max[r] * m.x[r, d, meal] for r in m.R for meal in m.M)
+                - m.slack_protein_max[d]
+                <= opt.protein_daily_max
+            )
+
+        model.protein_max = Constraint(model.D, rule=protein_max_rule)
 
     if options.enforce_weekly_kcal and opt.calories_weekly_min is not None:
         kcal_w = prepared.kcal
@@ -204,6 +258,36 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
 
         model.weekly_fiber_min = Constraint(rule=weekly_fiber_min)
 
+    if options.enforce_weekly_protein and opt.protein_weekly_min is not None:
+        protein_w = prepared.protein
+
+        def weekly_protein_min(m: Any) -> Any:
+            return (
+                sum(protein_w[r] * m.x[r, d, meal] for r in m.R for d in m.D for meal in m.M)
+                + m.slack_weekly_protein
+                >= opt.protein_weekly_min
+            )
+
+        model.weekly_protein_min = Constraint(rule=weekly_protein_min)
+
+    if spacing_active:
+
+        def pair_lower_d1(m: Any, r: int, d1: int, d2: int) -> Any:
+            return m.recipe_pair[r, d1, d2] <= sum(m.x[r, d1, meal] for meal in m.M)
+
+        def pair_lower_d2(m: Any, r: int, d1: int, d2: int) -> Any:
+            return m.recipe_pair[r, d1, d2] <= sum(m.x[r, d2, meal] for meal in m.M)
+
+        def pair_upper(m: Any, r: int, d1: int, d2: int) -> Any:
+            return (
+                m.recipe_pair[r, d1, d2]
+                >= sum(m.x[r, d1, meal] for meal in m.M) + sum(m.x[r, d2, meal] for meal in m.M) - 1
+            )
+
+        model.pair_lower_d1 = Constraint(model.R, model.PAIRS, rule=pair_lower_d1)
+        model.pair_lower_d2 = Constraint(model.R, model.PAIRS, rule=pair_lower_d2)
+        model.pair_upper = Constraint(model.R, model.PAIRS, rule=pair_upper)
+
     rating = prepared.rating
     recency = prepared.recency
 
@@ -218,25 +302,38 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
         slack = sum(m.slack_group[d, g] for d in m.D for g in m.G) + sum(
             m.slack_weekly_group[g] for g in m.G
         )
-        if hasattr(m, "slack_cal_min"):
-            slack += sum(m.slack_cal_min[d] for d in m.D)
-        if hasattr(m, "slack_cal_max"):
-            slack += sum(m.slack_cal_max[d] for d in m.D)
-        if hasattr(m, "slack_fiber"):
-            slack += sum(m.slack_fiber[d] for d in m.D)
-        if hasattr(m, "slack_weekly_cal_min"):
-            slack += m.slack_weekly_cal_min
-        if hasattr(m, "slack_weekly_cal_max"):
-            slack += m.slack_weekly_cal_max
-        if hasattr(m, "slack_weekly_fiber"):
-            slack += m.slack_weekly_fiber
-        if hasattr(m, "slack_snack"):
-            slack += sum(m.slack_snack[d] for d in m.D)
+        for attr in (
+            "slack_cal_min",
+            "slack_cal_max",
+            "slack_fiber_min",
+            "slack_fiber_max",
+            "slack_protein_min",
+            "slack_protein_max",
+            "slack_snack",
+        ):
+            if hasattr(m, attr):
+                slack += sum(getattr(m, attr)[d] for d in m.D)
+        for attr in (
+            "slack_weekly_cal_min",
+            "slack_weekly_cal_max",
+            "slack_weekly_fiber",
+            "slack_weekly_protein",
+        ):
+            if hasattr(m, attr):
+                slack += getattr(m, attr)
+        spacing_term: Any = 0
+        if spacing_active:
+            spacing_term = sum(
+                penalty_by_gap.get(d2 - d1, 0.0) * m.recipe_pair[r, d1, d2]
+                for r in m.R
+                for d1, d2 in relevant_pairs
+            )
         return (
             opt.diversity_weight * diversity
             + opt.rating_weight * rating_term
             - opt.recency_weight * recency_term
             - opt.slack_weight * slack
+            - opt.spacing_weight * spacing_term
         )
 
     model.objective = Objective(rule=objective_rule, sense=maximize)
@@ -263,14 +360,22 @@ def total_slack(model: Any, prepared: PreparedData) -> float:
     for attr in (
         "slack_cal_min",
         "slack_cal_max",
-        "slack_fiber",
+        "slack_fiber_min",
+        "slack_fiber_max",
+        "slack_protein_min",
+        "slack_protein_max",
         "slack_snack",
     ):
         if hasattr(model, attr):
             for d in prepared.days:
                 value = cast(Any, getattr(model, attr)[d]).value
                 total += float(value or 0)
-    for attr in ("slack_weekly_cal_min", "slack_weekly_cal_max", "slack_weekly_fiber"):
+    for attr in (
+        "slack_weekly_cal_min",
+        "slack_weekly_cal_max",
+        "slack_weekly_fiber",
+        "slack_weekly_protein",
+    ):
         if hasattr(model, attr):
             value = cast(Any, getattr(model, attr)).value
             total += float(value or 0)

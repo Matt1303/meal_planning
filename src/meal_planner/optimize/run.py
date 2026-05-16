@@ -34,8 +34,10 @@ _LEVELS: list[tuple[RelaxationLevel, ModelOptions]] = [
         ModelOptions(
             enforce_daily_kcal=True,
             enforce_daily_fiber=True,
+            enforce_daily_protein=True,
             enforce_weekly_kcal=True,
             enforce_weekly_fiber=True,
+            enforce_weekly_protein=True,
             enforce_group_targets=True,
             enforce_weekly_groups=True,
         ),
@@ -45,8 +47,10 @@ _LEVELS: list[tuple[RelaxationLevel, ModelOptions]] = [
         ModelOptions(
             enforce_daily_kcal=False,
             enforce_daily_fiber=False,
+            enforce_daily_protein=False,
             enforce_weekly_kcal=True,
             enforce_weekly_fiber=True,
+            enforce_weekly_protein=True,
             enforce_group_targets=True,
             enforce_weekly_groups=True,
         ),
@@ -56,8 +60,10 @@ _LEVELS: list[tuple[RelaxationLevel, ModelOptions]] = [
         ModelOptions(
             enforce_daily_kcal=False,
             enforce_daily_fiber=False,
+            enforce_daily_protein=False,
             enforce_weekly_kcal=False,
             enforce_weekly_fiber=False,
+            enforce_weekly_protein=False,
             enforce_group_targets=True,
             enforce_weekly_groups=False,
         ),
@@ -67,8 +73,10 @@ _LEVELS: list[tuple[RelaxationLevel, ModelOptions]] = [
         ModelOptions(
             enforce_daily_kcal=False,
             enforce_daily_fiber=False,
+            enforce_daily_protein=False,
             enforce_weekly_kcal=False,
             enforce_weekly_fiber=False,
+            enforce_weekly_protein=False,
             enforce_group_targets=False,
             enforce_weekly_groups=False,
         ),

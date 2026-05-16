@@ -147,6 +147,9 @@ class RecipeNutrition(Base):
     protein_g: Mapped[Decimal | None] = mapped_column(Numeric)
     fat_g: Mapped[Decimal | None] = mapped_column(Numeric)
     carbs_g: Mapped[Decimal | None] = mapped_column(Numeric)
+    per_serving_protein_g: Mapped[Decimal | None] = mapped_column(Numeric)
+    per_serving_fat_g: Mapped[Decimal | None] = mapped_column(Numeric)
+    per_serving_carbs_g: Mapped[Decimal | None] = mapped_column(Numeric)
 
 
 class MealHistory(Base):
@@ -230,6 +233,9 @@ class PlanDay(Base):
     day: Mapped[int] = mapped_column(Integer, primary_key=True)
     kcal: Mapped[Decimal | None] = mapped_column(Numeric)
     fiber_g: Mapped[Decimal | None] = mapped_column(Numeric)
+    protein_g: Mapped[Decimal | None] = mapped_column(Numeric)
+    fat_g: Mapped[Decimal | None] = mapped_column(Numeric)
+    carbs_g: Mapped[Decimal | None] = mapped_column(Numeric)
 
 
 class PlanDayGroup(Base):

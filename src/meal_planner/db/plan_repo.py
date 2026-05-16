@@ -109,13 +109,22 @@ def insert_plan_meal(
 
 
 def insert_plan_day(
-    conn: Connection, *, plan_run_id: int, day: int, kcal: Decimal | float, fiber_g: Decimal | float
+    conn: Connection,
+    *,
+    plan_run_id: int,
+    day: int,
+    kcal: Decimal | float,
+    fiber_g: Decimal | float,
+    protein_g: Decimal | float | None = None,
+    fat_g: Decimal | float | None = None,
+    carbs_g: Decimal | float | None = None,
 ) -> None:
     conn.execute(
         text(
             """
-            INSERT INTO meal_planning.plan_day (plan_run_id, day, kcal, fiber_g)
-            VALUES (:pr, :d, :k, :f)
+            INSERT INTO meal_planning.plan_day
+                (plan_run_id, day, kcal, fiber_g, protein_g, fat_g, carbs_g)
+            VALUES (:pr, :d, :k, :f, :p, :ft, :c)
             """
         ),
         {
@@ -123,6 +132,9 @@ def insert_plan_day(
             "d": day,
             "k": Decimal(str(kcal)),
             "f": Decimal(str(fiber_g)),
+            "p": Decimal(str(protein_g)) if protein_g is not None else None,
+            "ft": Decimal(str(fat_g)) if fat_g is not None else None,
+            "c": Decimal(str(carbs_g)) if carbs_g is not None else None,
         },
     )
 
