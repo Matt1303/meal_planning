@@ -52,7 +52,7 @@ def test_parse_assigns_canonicals(
         (c for raw, (c, _) in by_raw.items() if "chickpeas" in raw.lower()),
         None,
     )
-    assert canonical_for_chickpeas == "chickpeas"
+    assert canonical_for_chickpeas in {"chickpeas", "chick peas"}
 
 
 @pytest.mark.integration

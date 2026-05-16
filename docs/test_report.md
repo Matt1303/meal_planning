@@ -336,6 +336,59 @@ report:    reports/plan_1.md, reports/plan_1.html generated; legacy plan_report.
 
 Adding 7 entries to `config/ingredient_synonyms.csv` (flax↔flaxseed, chickpeas↔chick peas) would push USDA/CoFID match quality further, but is no longer load-bearing on the coverage gate.
 
+## Round 5 — same-day duplicate bug (2026-05-16)
+
+Round 4 output for day 2 showed `Lunch: Chickpea & Cauliflower Curry` and
+`Dinner: Chickpea & Cauliflower Curry` — the same recipe filling two slots
+on the same day. Flagged by user as unacceptable.
+
+### Issue 16 — same recipe could occupy multiple slots on one day (`src/meal_planner/optimize/model.py`)
+
+Cause: the model had `meal_slot` (exactly 1 recipe per (d, m)) and
+`repeat_limit` (recipe r appears at most `max_recipe_repeats` times across
+the week), but nothing forcing distinctness *within* a day. Under
+nutrition pressure, the optimiser could maximise its objective by filling
+both lunch and dinner with the same calorically-dense recipe.
+
+Fix: added `one_recipe_per_day` constraint
+`sum_m x[r, d, m] <= 1` for every (recipe, day).
+
+Regression test added in `tests/integration/test_optimise.py`:
+`test_no_recipe_appears_twice_on_same_day` walks the returned plan and
+asserts `len(picks) == len(set(picks))` for each day.
+
+### Re-run with the fix
+
+```
+plan_run_id=2 unique_ingredients=90 (vs 84) violations=93 (vs 98)
+slack_total=450 (vs 584)
+DB check: every day has 3 picks / 3 distinct recipes
+```
+
+Day 2 example after the fix:
+
+```
+Breakfast: Berry and Banana Smoothie Bowl
+Lunch:     Healing Miso Soup
+Dinner:    Plant-Powered Polenta Ragu
+Calories:  2021 kcal | Fibre: 31.3 g
+```
+
+### Side observation (not fixed)
+
+Two adjacent days in the Round 5 plan were identical
+(`Blueberry-Banana-Flaxseed Smoothie Bowl / 4-Bean Chilli / Weeknight
+Minestrone Soup` on both day 4 and day 5). That isn't the same-day bug —
+it's the across-week-repeat-cap (`max_recipe_repeats=2`) allowing both
+recipes to be chosen for two consecutive days, and on a fresh DB the
+recency term contributes 0 (no `meal_history`). Possible follow-ups, none
+load-bearing:
+1. Add a soft penalty on consecutive-day repeats.
+2. Lower `max_recipe_repeats` to 1.
+3. After the first plan is written, the recency term naturally encourages
+   variety in week 2 onward; the recency penalty isn't yet engaged on the
+   first run.
+
 ## Recommended follow-up
 
 1. **Default snack-handling test in unit suite** — the `_maybe_force_snack_optional` path is now important; add an integration test that exercises a corpus with no snack recipes.

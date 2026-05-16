@@ -83,6 +83,11 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
 
     model.repeat_limit = Constraint(model.R, rule=repeat_rule)
 
+    def one_per_day_rule(m: Any, r: int, d: int) -> Any:
+        return sum(m.x[r, d, meal] for meal in m.M) <= 1
+
+    model.one_recipe_per_day = Constraint(model.R, model.D, rule=one_per_day_rule)
+
     portion_met = prepared.portion_met
 
     def ingredient_use_rule(m: Any, d: int, i: str) -> Any:

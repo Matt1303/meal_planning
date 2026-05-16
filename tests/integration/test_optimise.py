@@ -127,3 +127,18 @@ def test_meal_history_recorded(clean_db: Engine, settings_with_fixtures: Setting
     with clean_db.connect() as conn:
         n = conn.execute(text("SELECT count(*) FROM meal_planning.meal_history")).scalar_one()
     assert n > 0
+
+
+@pytest.mark.integration
+def test_no_recipe_appears_twice_on_same_day(
+    clean_db: Engine, settings_with_fixtures: Settings
+) -> None:
+    ingest_local_html(settings_with_fixtures, engine=clean_db)
+    parse_ingredients(settings_with_fixtures, engine=clean_db)
+    _seed_recipe_nutrition(clean_db)
+    result = optimize_plan(settings_with_fixtures, engine=clean_db)
+    for day, meals in result.plan.items():
+        picked = [r for r in meals.values() if r is not None]
+        assert len(picked) == len(
+            set(picked)
+        ), f"day {day}: recipe appears in more than one slot: {meals}"
