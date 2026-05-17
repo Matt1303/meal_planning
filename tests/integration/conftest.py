@@ -62,6 +62,7 @@ def clean_db(pg_engine: Engine) -> Iterator[Engine]:
     tables = [
         "pipeline_metric",
         "plan_day_group",
+        "plan_day_profile",
         "plan_day",
         "plan_meal",
         "plan_run",
@@ -79,4 +80,6 @@ def clean_db(pg_engine: Engine) -> Iterator[Engine]:
     with pg_engine.begin() as conn:
         for table in tables:
             conn.execute(text(f"TRUNCATE meal_planning.{table} CASCADE"))
+        # Keep the shared-meal sentinel (profile_id=0) but wipe other profiles.
+        conn.execute(text("DELETE FROM meal_planning.user_profile WHERE profile_id <> 0"))
     yield pg_engine

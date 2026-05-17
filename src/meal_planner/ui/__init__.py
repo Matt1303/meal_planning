@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from meal_planner.ui.data import (
     DayPlan,
+    DayPlanForProfile,
     MealEntry,
     NutritionGaps,
     PlanView,
@@ -12,6 +13,7 @@ from meal_planner.ui.data import (
 
 __all__ = [
     "DayPlan",
+    "DayPlanForProfile",
     "MealEntry",
     "NutritionGaps",
     "PlanView",

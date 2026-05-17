@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from sqlalchemy import Engine, text
 
-from meal_planner.config import OptimizerSettings
+from meal_planner.config import HouseholdSettings, OptimizerSettings, ProfileTargets
 from meal_planner.db import get_engine
 
 
@@ -33,8 +33,9 @@ class NutritionGaps:
 
 
 @dataclass(frozen=True)
-class DayPlan:
-    day: int
+class DayPlanForProfile:
+    profile_name: str
+    display_name: str
     meals: list[MealEntry]
     day_kcal: float
     day_fiber_g: float
@@ -49,6 +50,12 @@ class DayPlan:
 
 
 @dataclass(frozen=True)
+class DayPlan:
+    day: int
+    per_profile: list[DayPlanForProfile]
+
+
+@dataclass(frozen=True)
 class PlanView:
     plan_run_id: int
     run_time: str
@@ -59,16 +66,32 @@ class PlanView:
     days: list[DayPlan]
 
 
-def compute_gaps(day: DayPlan, opt: OptimizerSettings) -> NutritionGaps:
+def _targets_for(opt: OptimizerSettings, profile: ProfileTargets | None) -> ProfileTargets:
+    if profile is not None:
+        return profile
+    return ProfileTargets(
+        name="default",
+        display_name="Default",
+        calories_daily_min=opt.calories_daily_min,
+        calories_daily_max=opt.calories_daily_max,
+        fiber_daily_min=opt.fiber_daily_min,
+        protein_daily_min=opt.protein_daily_min,
+        protein_daily_max=opt.protein_daily_max,
+    )
+
+
+def compute_gaps(
+    day_kcal: float, day_fiber_g: float, day_protein_g: float, targets: ProfileTargets
+) -> NutritionGaps:
     kcal_gap = 0.0
     fiber_gap = 0.0
     protein_gap = 0.0
-    if opt.calories_daily_min is not None and day.day_kcal < float(opt.calories_daily_min):
-        kcal_gap = float(opt.calories_daily_min) - day.day_kcal
-    if opt.fiber_daily_min is not None and day.day_fiber_g < float(opt.fiber_daily_min):
-        fiber_gap = float(opt.fiber_daily_min) - day.day_fiber_g
-    if opt.protein_daily_min is not None and day.day_protein_g < float(opt.protein_daily_min):
-        protein_gap = float(opt.protein_daily_min) - day.day_protein_g
+    if targets.calories_daily_min is not None and day_kcal < float(targets.calories_daily_min):
+        kcal_gap = float(targets.calories_daily_min) - day_kcal
+    if targets.fiber_daily_min is not None and day_fiber_g < float(targets.fiber_daily_min):
+        fiber_gap = float(targets.fiber_daily_min) - day_fiber_g
+    if targets.protein_daily_min is not None and day_protein_g < float(targets.protein_daily_min):
+        protein_gap = float(targets.protein_daily_min) - day_protein_g
     return NutritionGaps(kcal=kcal_gap, fiber_g=fiber_gap, protein_g=protein_gap)
 
 
@@ -78,8 +101,28 @@ def _f(value: Decimal | float | None) -> float:
     return float(value)
 
 
+def _load_profile_records(engine: Engine, plan_run_id: int) -> dict[int, str]:
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT DISTINCT up.profile_id, COALESCE(up.display_name, up.name) AS display
+                FROM meal_planning.plan_meal pm
+                JOIN meal_planning.user_profile up ON up.profile_id = pm.profile_id
+                WHERE pm.plan_run_id = :pr
+                """
+            ),
+            {"pr": plan_run_id},
+        ).fetchall()
+    return {int(r[0]): str(r[1]) for r in rows}
+
+
 def load_plan_view(
-    plan_run_id: int, opt: OptimizerSettings, *, engine: Engine | None = None
+    plan_run_id: int,
+    opt: OptimizerSettings,
+    household: HouseholdSettings,
+    *,
+    engine: Engine | None = None,
 ) -> PlanView | None:
     eng = engine or get_engine()
     with eng.connect() as conn:
@@ -99,7 +142,7 @@ def load_plan_view(
         meal_rows = conn.execute(
             text(
                 """
-                SELECT pm.day, pm.meal_type, pm.recipe_id, r.title,
+                SELECT pm.day, pm.meal_type, pm.profile_id, pm.recipe_id, r.title,
                        rn.per_serving_kcal, rn.per_serving_fiber_g,
                        rn.per_serving_protein_g, rn.per_serving_fat_g, rn.per_serving_carbs_g
                 FROM meal_planning.plan_meal pm
@@ -112,12 +155,15 @@ def load_plan_view(
             {"pr": plan_run_id},
         ).fetchall()
 
-        day_rows = conn.execute(
+        day_profile_rows = conn.execute(
             text(
                 """
-                SELECT day, kcal, fiber_g, protein_g, fat_g, carbs_g
-                FROM meal_planning.plan_day WHERE plan_run_id = :pr
-                ORDER BY day
+                SELECT pdp.day, pdp.profile_id, up.name, COALESCE(up.display_name, up.name),
+                       pdp.kcal, pdp.fiber_g, pdp.protein_g, pdp.fat_g, pdp.carbs_g
+                FROM meal_planning.plan_day_profile pdp
+                JOIN meal_planning.user_profile up ON up.profile_id = pdp.profile_id
+                WHERE pdp.plan_run_id = :pr
+                ORDER BY pdp.day, pdp.profile_id
                 """
             ),
             {"pr": plan_run_id},
@@ -134,66 +180,99 @@ def load_plan_view(
             {"pr": plan_run_id},
         ).fetchall()
 
-    meals_by_day: dict[int, list[MealEntry]] = {}
-    for row in meal_rows:
-        meals_by_day.setdefault(int(row[0]), []).append(
-            MealEntry(
-                meal_type=str(row[1]),
-                title=row[3],
-                recipe_id=int(row[2]) if row[2] is not None else None,
-                kcal=_f(row[4]),
-                fiber_g=_f(row[5]),
-                protein_g=_f(row[6]),
-                fat_g=_f(row[7]),
-                carbs_g=_f(row[8]),
-            )
-        )
+    profile_lookup = _load_profile_records(eng, plan_run_id)
 
-    day_totals: dict[int, tuple[float, float, float, float, float]] = {
-        int(row[0]): (_f(row[1]), _f(row[2]), _f(row[3]), _f(row[4]), _f(row[5]))
-        for row in day_rows
-    }
+    # Bucket meals: per (day, profile_id) -> list of MealEntry
+    meals_by_day_profile: dict[tuple[int, int], list[MealEntry]] = {}
+    shared_meals_by_day: dict[int, list[MealEntry]] = {}
+    for row in meal_rows:
+        day_int = int(row[0])
+        meal_type = str(row[1])
+        profile_id = int(row[2])
+        entry = MealEntry(
+            meal_type=meal_type,
+            title=row[4],
+            recipe_id=int(row[3]) if row[3] is not None else None,
+            kcal=_f(row[5]),
+            fiber_g=_f(row[6]),
+            protein_g=_f(row[7]),
+            fat_g=_f(row[8]),
+            carbs_g=_f(row[9]),
+        )
+        if profile_id == 0:
+            shared_meals_by_day.setdefault(day_int, []).append(entry)
+        else:
+            meals_by_day_profile.setdefault((day_int, profile_id), []).append(entry)
+
+    targets_by_name: dict[str, ProfileTargets] = {p.name: p for p in household.profiles}
 
     groups_by_day: dict[int, dict[str, tuple[int, int, float]]] = {}
-    targets = {}
-    for group_name, target in opt.model_dump(mode="json").get("daily_dozen_targets", {}).items():
-        targets[group_name] = int(target)
-
     for row in group_rows:
         day_int = int(row[0])
-        group = str(row[1])
-        count = int(row[2] or 0)
-        portions = _f(row[3])
-        target = targets.get(group, 0)
-        groups_by_day.setdefault(day_int, {})[group] = (count, target, portions)
+        groups_by_day.setdefault(day_int, {})[str(row[1])] = (
+            int(row[2] or 0),
+            int(opt.model_dump().get("daily_dozen_targets", {}).get(str(row[1]), 0)),
+            _f(row[3]),
+        )
 
-    days: list[DayPlan] = []
-    for day_int in sorted(meals_by_day.keys()):
-        totals = day_totals.get(day_int, (0.0, 0.0, 0.0, 0.0, 0.0))
-        day_plan = DayPlan(
-            day=day_int,
-            meals=meals_by_day[day_int],
-            day_kcal=totals[0],
-            day_fiber_g=totals[1],
-            day_protein_g=totals[2],
-            day_fat_g=totals[3],
-            day_carbs_g=totals[4],
-            daily_dozen=groups_by_day.get(day_int, {}),
-        )
-        gaps = compute_gaps(day_plan, opt)
-        days.append(
-            DayPlan(
-                day=day_plan.day,
-                meals=day_plan.meals,
-                day_kcal=day_plan.day_kcal,
-                day_fiber_g=day_plan.day_fiber_g,
-                day_protein_g=day_plan.day_protein_g,
-                day_fat_g=day_plan.day_fat_g,
-                day_carbs_g=day_plan.day_carbs_g,
-                daily_dozen=day_plan.daily_dozen,
-                gaps=gaps,
+    profile_id_to_name: dict[int, str] = {}
+    profile_id_to_display: dict[int, str] = {}
+    for row in day_profile_rows:
+        profile_id_to_name[int(row[1])] = str(row[2])
+        profile_id_to_display[int(row[1])] = str(row[3])
+
+    if not profile_id_to_name and profile_lookup:
+        for pid, display in profile_lookup.items():
+            profile_id_to_name[pid] = display
+            profile_id_to_display[pid] = display
+
+    if not profile_id_to_name:
+        profile_id_to_name = {0: "default"}
+        profile_id_to_display = {0: "Default"}
+
+    profile_totals: dict[tuple[int, int], tuple[float, float, float, float, float]] = {
+        (int(row[0]), int(row[1])): (_f(row[4]), _f(row[5]), _f(row[6]), _f(row[7]), _f(row[8]))
+        for row in day_profile_rows
+    }
+
+    days_set = sorted({row[0] for row in meal_rows} | {row[0] for row in day_profile_rows})
+    days_int = [int(d) for d in days_set]
+
+    plan_days: list[DayPlan] = []
+    for day_int in days_int:
+        per_profile: list[DayPlanForProfile] = []
+        shared = shared_meals_by_day.get(day_int, [])
+        for profile_id, name in profile_id_to_name.items():
+            display = profile_id_to_display.get(profile_id, name)
+            user_meals = list(meals_by_day_profile.get((day_int, profile_id), []))
+            combined = list(shared) + user_meals
+            totals = profile_totals.get(
+                (day_int, profile_id),
+                (
+                    sum(m.kcal for m in combined),
+                    sum(m.fiber_g for m in combined),
+                    sum(m.protein_g for m in combined),
+                    sum(m.fat_g for m in combined),
+                    sum(m.carbs_g for m in combined),
+                ),
             )
-        )
+            targets = _targets_for(opt, targets_by_name.get(name))
+            gaps = compute_gaps(totals[0], totals[1], totals[2], targets)
+            per_profile.append(
+                DayPlanForProfile(
+                    profile_name=name,
+                    display_name=display,
+                    meals=combined,
+                    day_kcal=totals[0],
+                    day_fiber_g=totals[1],
+                    day_protein_g=totals[2],
+                    day_fat_g=totals[3],
+                    day_carbs_g=totals[4],
+                    daily_dozen=groups_by_day.get(day_int, {}),
+                    gaps=gaps,
+                )
+            )
+        plan_days.append(DayPlan(day=day_int, per_profile=per_profile))
 
     return PlanView(
         plan_run_id=int(run_row[0]),
@@ -202,12 +281,15 @@ def load_plan_view(
         relaxation_level=int(run_row[3]),
         slack_total=float(run_row[4] or 0),
         correlation_id=run_row[5],
-        days=days,
+        days=plan_days,
     )
 
 
 def load_latest_plan_view(
-    opt: OptimizerSettings, *, engine: Engine | None = None
+    opt: OptimizerSettings,
+    household: HouseholdSettings,
+    *,
+    engine: Engine | None = None,
 ) -> PlanView | None:
     eng = engine or get_engine()
     with eng.connect() as conn:
@@ -216,4 +298,4 @@ def load_latest_plan_view(
         ).fetchone()
     if row is None:
         return None
-    return load_plan_view(int(row[0]), opt, engine=eng)
+    return load_plan_view(int(row[0]), opt, household, engine=eng)

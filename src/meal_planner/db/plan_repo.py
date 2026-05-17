@@ -95,16 +95,56 @@ def insert_plan_run(
 
 
 def insert_plan_meal(
-    conn: Connection, *, plan_run_id: int, day: int, meal_type: str, recipe_id: int | None
+    conn: Connection,
+    *,
+    plan_run_id: int,
+    day: int,
+    meal_type: str,
+    recipe_id: int | None,
+    profile_id: int = 0,
 ) -> None:
     conn.execute(
         text(
             """
-            INSERT INTO meal_planning.plan_meal (plan_run_id, day, meal_type, recipe_id)
-            VALUES (:pr, :d, :m, :r)
+            INSERT INTO meal_planning.plan_meal
+                (plan_run_id, day, meal_type, profile_id, recipe_id)
+            VALUES (:pr, :d, :m, :pid, :r)
             """
         ),
-        {"pr": plan_run_id, "d": day, "m": meal_type, "r": recipe_id},
+        {"pr": plan_run_id, "d": day, "m": meal_type, "pid": profile_id, "r": recipe_id},
+    )
+
+
+def insert_plan_day_profile(
+    conn: Connection,
+    *,
+    plan_run_id: int,
+    day: int,
+    profile_id: int,
+    kcal: Decimal | float,
+    fiber_g: Decimal | float,
+    protein_g: Decimal | float,
+    fat_g: Decimal | float,
+    carbs_g: Decimal | float,
+) -> None:
+    conn.execute(
+        text(
+            """
+            INSERT INTO meal_planning.plan_day_profile
+                (plan_run_id, day, profile_id, kcal, fiber_g, protein_g, fat_g, carbs_g)
+            VALUES (:pr, :d, :pid, :k, :f, :p, :ft, :c)
+            """
+        ),
+        {
+            "pr": plan_run_id,
+            "d": day,
+            "pid": profile_id,
+            "k": Decimal(str(kcal)),
+            "f": Decimal(str(fiber_g)),
+            "p": Decimal(str(protein_g)),
+            "ft": Decimal(str(fat_g)),
+            "c": Decimal(str(carbs_g)),
+        },
     )
 
 

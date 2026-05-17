@@ -109,6 +109,48 @@ class OptimizerSettings(BaseModel):
         return self
 
 
+class ProfileTargets(BaseModel):
+    name: str
+    display_name: str | None = None
+    calories_daily_min: int | None = None
+    calories_daily_max: int | None = None
+    fiber_daily_min: int | None = None
+    protein_daily_min: int | None = None
+    protein_daily_max: int | None = None
+
+    @model_validator(mode="after")
+    def _validate_ranges(self) -> ProfileTargets:
+        if (
+            self.calories_daily_min is not None
+            and self.calories_daily_max is not None
+            and self.calories_daily_min > self.calories_daily_max
+        ):
+            raise ValueError(
+                f"profile '{self.name}': calories_daily_min must be <= calories_daily_max"
+            )
+        if (
+            self.protein_daily_min is not None
+            and self.protein_daily_max is not None
+            and self.protein_daily_min > self.protein_daily_max
+        ):
+            raise ValueError(
+                f"profile '{self.name}': protein_daily_min must be <= protein_daily_max"
+            )
+        return self
+
+
+class HouseholdSettings(BaseModel):
+    profiles: list[ProfileTargets] = Field(default_factory=list)
+    shared_meal_types: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_unique_names(self) -> HouseholdSettings:
+        names = [p.name for p in self.profiles]
+        if len(names) != len(set(names)):
+            raise ValueError(f"household profile names must be unique: {names}")
+        return self
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_nested_delimiter="__",
@@ -122,6 +164,7 @@ class Settings(BaseSettings):
     llm: LLMSettings = Field(default_factory=LLMSettings)
     nutrition: NutritionSettings = Field(default_factory=NutritionSettings)
     optimizer: OptimizerSettings = Field(default_factory=OptimizerSettings)
+    household: HouseholdSettings = Field(default_factory=HouseholdSettings)
     meal_types: list[str] = Field(default_factory=lambda: ["breakfast", "lunch", "dinner", "snack"])
     portion_sizes: dict[str, float] = Field(default_factory=dict)
     daily_dozen_targets: dict[str, int] = Field(default_factory=dict)
@@ -141,6 +184,13 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"daily_dozen_targets has groups missing from portion_sizes: {missing}"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _household_shared_meals_subset(self) -> Settings:
+        unknown = sorted(set(self.household.shared_meal_types) - set(self.meal_types))
+        if unknown:
+            raise ValueError(f"household.shared_meal_types contains unknown meal types: {unknown}")
         return self
 
     @classmethod

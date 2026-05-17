@@ -152,6 +152,21 @@ class RecipeNutrition(Base):
     per_serving_carbs_g: Mapped[Decimal | None] = mapped_column(Numeric)
 
 
+class UserProfile(Base):
+    __tablename__ = "user_profile"
+    __table_args__ = {"schema": SCHEMA}
+
+    profile_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    display_name: Mapped[str | None] = mapped_column(Text)
+    calories_daily_min: Mapped[int | None] = mapped_column(Integer)
+    calories_daily_max: Mapped[int | None] = mapped_column(Integer)
+    fiber_daily_min: Mapped[int | None] = mapped_column(Integer)
+    protein_daily_min: Mapped[int | None] = mapped_column(Integer)
+    protein_daily_max: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class MealHistory(Base):
     __tablename__ = "meal_history"
     __table_args__ = (
@@ -215,10 +230,33 @@ class PlanMeal(Base):
     )
     day: Mapped[int] = mapped_column(Integer, primary_key=True)
     meal_type: Mapped[str] = mapped_column(Text, primary_key=True)
+    profile_id: Mapped[int] = mapped_column(Integer, primary_key=True, default=0)
     recipe_id: Mapped[int | None] = mapped_column(
         Integer,
         ForeignKey(f"{SCHEMA}.recipe.recipe_id"),
     )
+
+
+class PlanDayProfile(Base):
+    __tablename__ = "plan_day_profile"
+    __table_args__ = {"schema": SCHEMA}
+
+    plan_run_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey(f"{SCHEMA}.plan_run.plan_run_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    day: Mapped[int] = mapped_column(Integer, primary_key=True)
+    profile_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey(f"{SCHEMA}.user_profile.profile_id"),
+        primary_key=True,
+    )
+    kcal: Mapped[Decimal | None] = mapped_column(Numeric)
+    fiber_g: Mapped[Decimal | None] = mapped_column(Numeric)
+    protein_g: Mapped[Decimal | None] = mapped_column(Numeric)
+    fat_g: Mapped[Decimal | None] = mapped_column(Numeric)
+    carbs_g: Mapped[Decimal | None] = mapped_column(Numeric)
 
 
 class PlanDay(Base):

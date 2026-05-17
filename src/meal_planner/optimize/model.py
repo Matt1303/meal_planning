@@ -15,7 +15,7 @@ from pyomo.environ import (
 )
 
 from meal_planner.config import Settings
-from meal_planner.optimize.data import PreparedData
+from meal_planner.optimize.data import PreparedData, ProfileSpec
 
 
 @dataclass(frozen=True)
@@ -30,9 +30,30 @@ class ModelOptions:
     enforce_weekly_groups: bool
 
 
+def _slot_user_keys(prepared: PreparedData) -> list[tuple[str, str]]:
+    return [(p.name, m) for p in prepared.profiles for m in prepared.per_user_meal_types]
+
+
+def _meal_appearances(m: Any, r: int, d: int, prepared: PreparedData) -> Any:
+    shared_sum = sum(m.x_shared[r, d, meal] for meal in prepared.shared_meal_types)
+    user_sum = sum(
+        m.x_user[p.name, r, d, meal]
+        for p in prepared.profiles
+        for meal in prepared.per_user_meal_types
+    )
+    return shared_sum + user_sum
+
+
+def _user_recipes_on_day(m: Any, p: ProfileSpec, r: int, d: int, prepared: PreparedData) -> Any:
+    shared_sum = sum(m.x_shared[r, d, meal] for meal in prepared.shared_meal_types)
+    user_sum = sum(m.x_user[p.name, r, d, meal] for meal in prepared.per_user_meal_types)
+    return shared_sum + user_sum
+
+
 def build_model(prepared: PreparedData, settings: Settings, options: ModelOptions) -> Any:
     opt = settings.optimizer
     targets = settings.daily_dozen_targets
+    profile_names = [p.name for p in prepared.profiles]
 
     model = ConcreteModel()
     model.D = Set(initialize=prepared.days)
@@ -40,26 +61,57 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
     model.R = Set(initialize=prepared.recipes)
     model.I = Set(initialize=prepared.ingredients_canonical)
     model.G = Set(initialize=prepared.food_groups)
+    model.SHARED_M = Set(initialize=prepared.shared_meal_types)
+    model.USER_M = Set(initialize=prepared.per_user_meal_types)
+    model.P = Set(initialize=profile_names)
 
-    model.x = Var(model.R, model.D, model.M, domain=Binary)
-    model.z = Var(model.D, model.I, domain=Binary)
-    model.y = Var(model.I, domain=Binary)
+    if prepared.shared_meal_types:
+        model.x_shared = Var(model.R, model.D, model.SHARED_M, domain=Binary)
+    if prepared.per_user_meal_types:
+        model.x_user = Var(model.P, model.R, model.D, model.USER_M, domain=Binary)
+    model.z = Var(model.P, model.D, model.I, domain=Binary)
+    model.y = Var(model.P, model.I, domain=Binary)
 
-    model.slack_group = Var(model.D, model.G, domain=NonNegativeReals)
-    model.slack_weekly_group = Var(model.G, domain=NonNegativeReals)
+    model.slack_group = Var(model.P, model.D, model.G, domain=NonNegativeReals)
+    model.slack_weekly_group = Var(model.P, model.G, domain=NonNegativeReals)
 
-    if options.enforce_daily_kcal and opt.calories_daily_min is not None:
-        model.slack_cal_min = Var(model.D, domain=NonNegativeReals)
-    if options.enforce_daily_kcal and opt.calories_daily_max is not None:
-        model.slack_cal_max = Var(model.D, domain=NonNegativeReals)
-    if options.enforce_daily_fiber and opt.fiber_daily_min is not None:
-        model.slack_fiber_min = Var(model.D, domain=NonNegativeReals)
-    if options.enforce_daily_fiber and opt.fiber_daily_max is not None:
-        model.slack_fiber_max = Var(model.D, domain=NonNegativeReals)
-    if options.enforce_daily_protein and opt.protein_daily_min is not None:
-        model.slack_protein_min = Var(model.D, domain=NonNegativeReals)
-    if options.enforce_daily_protein and opt.protein_daily_max is not None:
-        model.slack_protein_max = Var(model.D, domain=NonNegativeReals)
+    profiles_by_name = {p.name: p for p in prepared.profiles}
+
+    profiles_needing = {
+        "slack_cal_min": [
+            p.name
+            for p in prepared.profiles
+            if options.enforce_daily_kcal and p.calories_daily_min is not None
+        ],
+        "slack_cal_max": [
+            p.name
+            for p in prepared.profiles
+            if options.enforce_daily_kcal and p.calories_daily_max is not None
+        ],
+        "slack_fiber_min": [
+            p.name
+            for p in prepared.profiles
+            if options.enforce_daily_fiber and p.fiber_daily_min is not None
+        ],
+        "slack_protein_min": [
+            p.name
+            for p in prepared.profiles
+            if options.enforce_daily_protein and p.protein_daily_min is not None
+        ],
+        "slack_protein_max": [
+            p.name
+            for p in prepared.profiles
+            if options.enforce_daily_protein and p.protein_daily_max is not None
+        ],
+    }
+    for attr, names in profiles_needing.items():
+        if names:
+            setattr(
+                model,
+                attr,
+                Var(Set(initialize=names), model.D, domain=NonNegativeReals),
+            )
+
     if options.enforce_weekly_kcal and opt.calories_weekly_min is not None:
         model.slack_weekly_cal_min = Var(domain=NonNegativeReals)
     if options.enforce_weekly_kcal and opt.calories_weekly_max is not None:
@@ -69,7 +121,10 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
     if options.enforce_weekly_protein and opt.protein_weekly_min is not None:
         model.slack_weekly_protein = Var(domain=NonNegativeReals)
     if opt.snack_optional and "snack" in prepared.meal_types:
-        model.slack_snack = Var(model.D, domain=NonNegativeReals)
+        snack_slot_keys = _build_snack_keys(prepared)
+        if snack_slot_keys:
+            model.SNACK_KEYS = Set(initialize=snack_slot_keys, dimen=3)
+            model.slack_snack = Var(model.SNACK_KEYS, domain=NonNegativeReals)
 
     pairs = [(d1, d2) for d1 in prepared.days for d2 in prepared.days if d1 < d2]
     penalty_by_gap = opt.spacing_penalty_by_gap or {}
@@ -78,241 +133,284 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
     if spacing_active:
         model.PAIRS = Set(initialize=relevant_pairs, dimen=2)
         model.recipe_pair = Var(model.R, model.PAIRS, domain=Binary)
+        # appears_on_day[r, d] = 1 iff recipe r is used by anyone on day d.
+        # Lets recipe_pair stay binary even when multiple users eat r on the same day.
+        model.appears_on_day = Var(model.R, model.D, domain=Binary)
 
     snack_optional = opt.snack_optional and "snack" in prepared.meal_types
-
-    def meal_slot_rule(m: Any, d: int, meal: str) -> Any:
-        expr = sum(m.x[r, d, meal] for r in m.R)
-        if snack_optional and meal == "snack":
-            return expr + m.slack_snack[d] == 1
-        return expr == 1
-
-    model.meal_slot = Constraint(model.D, model.M, rule=meal_slot_rule)
-
     allowed_meal = prepared.allowed_meal
 
-    def allowed_rule(m: Any, r: int, d: int, meal: str) -> Any:
-        return m.x[r, d, meal] <= allowed_meal[(r, meal)]
+    def shared_slot_rule(m: Any, d: int, meal: str) -> Any:
+        return sum(m.x_shared[r, d, meal] for r in m.R) == 1
 
-    model.allowed = Constraint(model.R, model.D, model.M, rule=allowed_rule)
+    if prepared.shared_meal_types:
+        model.shared_slot = Constraint(model.D, model.SHARED_M, rule=shared_slot_rule)
+
+        def shared_allowed(m: Any, r: int, d: int, meal: str) -> Any:
+            return m.x_shared[r, d, meal] <= allowed_meal[(r, meal)]
+
+        model.shared_allowed = Constraint(model.R, model.D, model.SHARED_M, rule=shared_allowed)
+
+    if prepared.per_user_meal_types:
+
+        def user_slot_rule(m: Any, p: str, d: int, meal: str) -> Any:
+            expr = sum(m.x_user[p, r, d, meal] for r in m.R)
+            if snack_optional and meal == "snack" and hasattr(m, "slack_snack"):
+                return expr + m.slack_snack[p, d, meal] == 1
+            return expr == 1
+
+        model.user_slot = Constraint(model.P, model.D, model.USER_M, rule=user_slot_rule)
+
+        def user_allowed(m: Any, p: str, r: int, d: int, meal: str) -> Any:
+            return m.x_user[p, r, d, meal] <= allowed_meal[(r, meal)]
+
+        model.user_allowed = Constraint(model.P, model.R, model.D, model.USER_M, rule=user_allowed)
 
     def repeat_rule(m: Any, r: int) -> Any:
-        return sum(m.x[r, d, meal] for d in m.D for meal in m.M) <= opt.max_recipe_repeats
+        return sum(_meal_appearances(m, r, d, prepared) for d in m.D) <= opt.max_recipe_repeats
 
     model.repeat_limit = Constraint(model.R, rule=repeat_rule)
 
-    def one_per_day_rule(m: Any, r: int, d: int) -> Any:
-        return sum(m.x[r, d, meal] for meal in m.M) <= 1
+    def one_per_day_rule(m: Any, p: str, r: int, d: int) -> Any:
+        profile = profiles_by_name[p]
+        return _user_recipes_on_day(m, profile, r, d, prepared) <= 1
 
-    model.one_recipe_per_day = Constraint(model.R, model.D, rule=one_per_day_rule)
+    model.one_recipe_per_day = Constraint(model.P, model.R, model.D, rule=one_per_day_rule)
 
     portion_met = prepared.portion_met
 
-    def ingredient_use_rule(m: Any, d: int, i: str) -> Any:
-        return m.z[d, i] <= sum(portion_met[(r, i)] * m.x[r, d, meal] for r in m.R for meal in m.M)
+    def ingredient_use_rule(m: Any, p: str, d: int, i: str) -> Any:
+        profile = profiles_by_name[p]
+        return m.z[p, d, i] <= sum(
+            portion_met[(r, i)] * _user_recipes_on_day(m, profile, r, d, prepared) for r in m.R
+        )
 
-    model.ingredient_use = Constraint(model.D, model.I, rule=ingredient_use_rule)
+    model.ingredient_use = Constraint(model.P, model.D, model.I, rule=ingredient_use_rule)
 
-    def ingredient_lower(m: Any, i: str) -> Any:
-        return m.y[i] <= sum(m.z[d, i] for d in m.D)
+    def ingredient_lower(m: Any, p: str, i: str) -> Any:
+        return m.y[p, i] <= sum(m.z[p, d, i] for d in m.D)
 
-    def ingredient_upper(m: Any, i: str) -> Any:
-        return sum(m.z[d, i] for d in m.D) <= len(prepared.days) * m.y[i]
+    def ingredient_upper(m: Any, p: str, i: str) -> Any:
+        return sum(m.z[p, d, i] for d in m.D) <= len(prepared.days) * m.y[p, i]
 
-    model.ingredient_global_lower = Constraint(model.I, rule=ingredient_lower)
-    model.ingredient_global_upper = Constraint(model.I, rule=ingredient_upper)
+    model.ingredient_global_lower = Constraint(model.P, model.I, rule=ingredient_lower)
+    model.ingredient_global_upper = Constraint(model.P, model.I, rule=ingredient_upper)
 
     if options.enforce_group_targets:
         food_group_of = prepared.food_group_of
 
-        def group_rule(m: Any, d: int, g: str) -> Any:
+        def group_rule(m: Any, p: str, d: int, g: str) -> Any:
             return (
-                sum(m.z[d, i] for i in m.I if food_group_of.get(i) == g) + m.slack_group[d, g]
+                sum(m.z[p, d, i] for i in m.I if food_group_of.get(i) == g) + m.slack_group[p, d, g]
                 >= targets[g]
             )
 
-        model.group_min = Constraint(model.D, model.G, rule=group_rule)
+        model.group_min = Constraint(model.P, model.D, model.G, rule=group_rule)
 
     if options.enforce_weekly_groups:
         group_portions = prepared.group_portions
 
-        def weekly_group_rule(m: Any, g: str) -> Any:
+        def weekly_group_rule(m: Any, p: str, g: str) -> Any:
             target = opt.weekly_group_portions_min.get(g)
             if target is None:
                 target = float(targets.get(g, 0)) * len(prepared.days)
-            return (
-                sum(
-                    group_portions[(r, g)] * m.x[r, d, meal]
-                    for r in m.R
-                    for d in m.D
-                    for meal in m.M
-                )
-                + m.slack_weekly_group[g]
-                >= target
+            profile = profiles_by_name[p]
+            user_view = sum(
+                group_portions[(r, g)] * _user_recipes_on_day(m, profile, r, d, prepared)
+                for r in m.R
+                for d in m.D
             )
+            return user_view + m.slack_weekly_group[p, g] >= target
 
-        model.weekly_group_min = Constraint(model.G, rule=weekly_group_rule)
+        model.weekly_group_min = Constraint(model.P, model.G, rule=weekly_group_rule)
 
-    if options.enforce_daily_kcal and opt.calories_daily_min is not None:
+    if options.enforce_daily_kcal:
         kcal = prepared.kcal
 
-        def cal_min_rule(m: Any, d: int) -> Any:
+        def cal_min_rule(m: Any, p: str, d: int) -> Any:
+            profile = profiles_by_name[p]
             return (
-                sum(kcal[r] * m.x[r, d, meal] for r in m.R for meal in m.M) + m.slack_cal_min[d]
-                >= opt.calories_daily_min
+                sum(kcal[r] * _user_recipes_on_day(m, profile, r, d, prepared) for r in m.R)
+                + m.slack_cal_min[p, d]
+                >= profile.calories_daily_min
             )
 
-        model.cal_min = Constraint(model.D, rule=cal_min_rule)
-
-    if options.enforce_daily_kcal and opt.calories_daily_max is not None:
-        kcal_max = prepared.kcal
-
-        def cal_max_rule(m: Any, d: int) -> Any:
-            return (
-                sum(kcal_max[r] * m.x[r, d, meal] for r in m.R for meal in m.M) - m.slack_cal_max[d]
-                <= opt.calories_daily_max
+        if profiles_needing["slack_cal_min"]:
+            model.cal_min = Constraint(
+                Set(initialize=profiles_needing["slack_cal_min"]), model.D, rule=cal_min_rule
             )
 
-        model.cal_max = Constraint(model.D, rule=cal_max_rule)
+        def cal_max_rule(m: Any, p: str, d: int) -> Any:
+            profile = profiles_by_name[p]
+            return (
+                sum(kcal[r] * _user_recipes_on_day(m, profile, r, d, prepared) for r in m.R)
+                - m.slack_cal_max[p, d]
+                <= profile.calories_daily_max
+            )
 
-    if options.enforce_daily_fiber and opt.fiber_daily_min is not None:
+        if profiles_needing["slack_cal_max"]:
+            model.cal_max = Constraint(
+                Set(initialize=profiles_needing["slack_cal_max"]), model.D, rule=cal_max_rule
+            )
+
+    if options.enforce_daily_fiber:
         fiber = prepared.fiber
 
-        def fiber_min_rule(m: Any, d: int) -> Any:
+        def fiber_min_rule(m: Any, p: str, d: int) -> Any:
+            profile = profiles_by_name[p]
             return (
-                sum(fiber[r] * m.x[r, d, meal] for r in m.R for meal in m.M) + m.slack_fiber_min[d]
-                >= opt.fiber_daily_min
+                sum(fiber[r] * _user_recipes_on_day(m, profile, r, d, prepared) for r in m.R)
+                + m.slack_fiber_min[p, d]
+                >= profile.fiber_daily_min
             )
 
-        model.fiber_min = Constraint(model.D, rule=fiber_min_rule)
-
-    if options.enforce_daily_fiber and opt.fiber_daily_max is not None:
-        fiber_d_max = prepared.fiber
-
-        def fiber_max_rule(m: Any, d: int) -> Any:
-            return (
-                sum(fiber_d_max[r] * m.x[r, d, meal] for r in m.R for meal in m.M)
-                - m.slack_fiber_max[d]
-                <= opt.fiber_daily_max
+        if profiles_needing["slack_fiber_min"]:
+            model.fiber_min = Constraint(
+                Set(initialize=profiles_needing["slack_fiber_min"]), model.D, rule=fiber_min_rule
             )
 
-        model.fiber_max = Constraint(model.D, rule=fiber_max_rule)
-
-    if options.enforce_daily_protein and opt.protein_daily_min is not None:
+    if options.enforce_daily_protein:
         protein = prepared.protein
 
-        def protein_min_rule(m: Any, d: int) -> Any:
+        def protein_min_rule(m: Any, p: str, d: int) -> Any:
+            profile = profiles_by_name[p]
             return (
-                sum(protein[r] * m.x[r, d, meal] for r in m.R for meal in m.M)
-                + m.slack_protein_min[d]
-                >= opt.protein_daily_min
+                sum(protein[r] * _user_recipes_on_day(m, profile, r, d, prepared) for r in m.R)
+                + m.slack_protein_min[p, d]
+                >= profile.protein_daily_min
             )
 
-        model.protein_min = Constraint(model.D, rule=protein_min_rule)
-
-    if options.enforce_daily_protein and opt.protein_daily_max is not None:
-        protein_d_max = prepared.protein
-
-        def protein_max_rule(m: Any, d: int) -> Any:
-            return (
-                sum(protein_d_max[r] * m.x[r, d, meal] for r in m.R for meal in m.M)
-                - m.slack_protein_max[d]
-                <= opt.protein_daily_max
+        if profiles_needing["slack_protein_min"]:
+            model.protein_min = Constraint(
+                Set(initialize=profiles_needing["slack_protein_min"]),
+                model.D,
+                rule=protein_min_rule,
             )
 
-        model.protein_max = Constraint(model.D, rule=protein_max_rule)
+        def protein_max_rule(m: Any, p: str, d: int) -> Any:
+            profile = profiles_by_name[p]
+            return (
+                sum(protein[r] * _user_recipes_on_day(m, profile, r, d, prepared) for r in m.R)
+                - m.slack_protein_max[p, d]
+                <= profile.protein_daily_max
+            )
+
+        if profiles_needing["slack_protein_max"]:
+            model.protein_max = Constraint(
+                Set(initialize=profiles_needing["slack_protein_max"]),
+                model.D,
+                rule=protein_max_rule,
+            )
 
     if options.enforce_weekly_kcal and opt.calories_weekly_min is not None:
         kcal_w = prepared.kcal
+        cal_min_target = opt.calories_weekly_min * len(prepared.profiles)
 
         def weekly_cal_min(m: Any) -> Any:
-            return (
-                sum(kcal_w[r] * m.x[r, d, meal] for r in m.R for d in m.D for meal in m.M)
-                + m.slack_weekly_cal_min
-                >= opt.calories_weekly_min
+            total = sum(
+                kcal_w[r] * _user_recipes_on_day(m, p, r, d, prepared)
+                for p in prepared.profiles
+                for r in m.R
+                for d in m.D
             )
+            return total + m.slack_weekly_cal_min >= cal_min_target
 
         model.weekly_cal_min = Constraint(rule=weekly_cal_min)
 
     if options.enforce_weekly_kcal and opt.calories_weekly_max is not None:
         kcal_wm = prepared.kcal
+        cal_max_target = opt.calories_weekly_max * len(prepared.profiles)
 
         def weekly_cal_max(m: Any) -> Any:
-            return (
-                sum(kcal_wm[r] * m.x[r, d, meal] for r in m.R for d in m.D for meal in m.M)
-                - m.slack_weekly_cal_max
-                <= opt.calories_weekly_max
+            total = sum(
+                kcal_wm[r] * _user_recipes_on_day(m, p, r, d, prepared)
+                for p in prepared.profiles
+                for r in m.R
+                for d in m.D
             )
+            return total - m.slack_weekly_cal_max <= cal_max_target
 
         model.weekly_cal_max = Constraint(rule=weekly_cal_max)
 
     if options.enforce_weekly_fiber and opt.fiber_weekly_min is not None:
         fiber_w = prepared.fiber
+        fiber_target = opt.fiber_weekly_min * len(prepared.profiles)
 
         def weekly_fiber_min(m: Any) -> Any:
-            return (
-                sum(fiber_w[r] * m.x[r, d, meal] for r in m.R for d in m.D for meal in m.M)
-                + m.slack_weekly_fiber
-                >= opt.fiber_weekly_min
+            total = sum(
+                fiber_w[r] * _user_recipes_on_day(m, p, r, d, prepared)
+                for p in prepared.profiles
+                for r in m.R
+                for d in m.D
             )
+            return total + m.slack_weekly_fiber >= fiber_target
 
         model.weekly_fiber_min = Constraint(rule=weekly_fiber_min)
 
     if options.enforce_weekly_protein and opt.protein_weekly_min is not None:
         protein_w = prepared.protein
+        protein_target = opt.protein_weekly_min * len(prepared.profiles)
 
         def weekly_protein_min(m: Any) -> Any:
-            return (
-                sum(protein_w[r] * m.x[r, d, meal] for r in m.R for d in m.D for meal in m.M)
-                + m.slack_weekly_protein
-                >= opt.protein_weekly_min
+            total = sum(
+                protein_w[r] * _user_recipes_on_day(m, p, r, d, prepared)
+                for p in prepared.profiles
+                for r in m.R
+                for d in m.D
             )
+            return total + m.slack_weekly_protein >= protein_target
 
         model.weekly_protein_min = Constraint(rule=weekly_protein_min)
 
     if spacing_active:
+        max_per_day = max(
+            1,
+            len(prepared.shared_meal_types)
+            + len(prepared.profiles) * len(prepared.per_user_meal_types),
+        )
 
-        def pair_lower_d1(m: Any, r: int, d1: int, d2: int) -> Any:
-            return m.recipe_pair[r, d1, d2] <= sum(m.x[r, d1, meal] for meal in m.M)
+        def appears_link(m: Any, r: int, d: int) -> Any:
+            # appears_on_day is 1 iff any slot is filled with r on day d.
+            # Using a big-M-style upper bound keeps it binary even when multiple
+            # users eat the same recipe on the same day.
+            return _meal_appearances(m, r, d, prepared) <= max_per_day * m.appears_on_day[r, d]
 
-        def pair_lower_d2(m: Any, r: int, d1: int, d2: int) -> Any:
-            return m.recipe_pair[r, d1, d2] <= sum(m.x[r, d2, meal] for meal in m.M)
+        model.appears_link = Constraint(model.R, model.D, rule=appears_link)
 
         def pair_upper(m: Any, r: int, d1: int, d2: int) -> Any:
-            return (
-                m.recipe_pair[r, d1, d2]
-                >= sum(m.x[r, d1, meal] for meal in m.M) + sum(m.x[r, d2, meal] for meal in m.M) - 1
+            return m.recipe_pair[r, d1, d2] >= (
+                m.appears_on_day[r, d1] + m.appears_on_day[r, d2] - 1
             )
 
-        model.pair_lower_d1 = Constraint(model.R, model.PAIRS, rule=pair_lower_d1)
-        model.pair_lower_d2 = Constraint(model.R, model.PAIRS, rule=pair_lower_d2)
         model.pair_upper = Constraint(model.R, model.PAIRS, rule=pair_upper)
 
     rating = prepared.rating
     recency = prepared.recency
 
     def objective_rule(m: Any) -> Any:
-        diversity = sum(m.y[i] for i in m.I)
+        diversity = sum(m.y[p, i] for p in m.P for i in m.I)
         rating_term = sum(
-            rating[r] * sum(m.x[r, d, meal] for d in m.D for meal in m.M) for r in m.R
+            rating[r] * _meal_appearances(m, r, d, prepared) for r in m.R for d in m.D
         )
         recency_term = sum(
-            recency[r] * sum(m.x[r, d, meal] for d in m.D for meal in m.M) for r in m.R
+            recency[r] * _meal_appearances(m, r, d, prepared) for r in m.R for d in m.D
         )
-        slack = sum(m.slack_group[d, g] for d in m.D for g in m.G) + sum(
-            m.slack_weekly_group[g] for g in m.G
+        slack = sum(m.slack_group[p, d, g] for p in m.P for d in m.D for g in m.G) + sum(
+            m.slack_weekly_group[p, g] for p in m.P for g in m.G
         )
-        for attr in (
+        per_profile_per_day_slacks = (
             "slack_cal_min",
             "slack_cal_max",
             "slack_fiber_min",
-            "slack_fiber_max",
             "slack_protein_min",
             "slack_protein_max",
-            "slack_snack",
-        ):
+        )
+        for attr in per_profile_per_day_slacks:
             if hasattr(m, attr):
-                slack += sum(getattr(m, attr)[d] for d in m.D)
+                var = getattr(m, attr)
+                slack += sum(var[idx] for idx in var)
+        if hasattr(m, "slack_snack"):
+            slack += sum(m.slack_snack[idx] for idx in m.slack_snack)
         for attr in (
             "slack_weekly_cal_min",
             "slack_weekly_cal_max",
@@ -340,36 +438,48 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
     return model
 
 
+def _build_snack_keys(prepared: PreparedData) -> list[tuple[str, int, str]]:
+    return [(p.name, d, "snack") for p in prepared.profiles for d in prepared.days]
+
+
 def variable_count(prepared: PreparedData) -> int:
-    return (
-        len(prepared.recipes) * len(prepared.days) * len(prepared.meal_types)
-        + len(prepared.days) * len(prepared.ingredients_canonical)
-        + len(prepared.ingredients_canonical)
+    shared = len(prepared.recipes) * len(prepared.days) * len(prepared.shared_meal_types)
+    user = (
+        len(prepared.profiles)
+        * len(prepared.recipes)
+        * len(prepared.days)
+        * len(prepared.per_user_meal_types)
     )
+    z = len(prepared.profiles) * len(prepared.days) * len(prepared.ingredients_canonical)
+    y = len(prepared.profiles) * len(prepared.ingredients_canonical)
+    return shared + user + z + y
 
 
 def total_slack(model: Any, prepared: PreparedData) -> float:
     total = 0.0
-    for d in prepared.days:
+    for p in prepared.profiles:
+        for d in prepared.days:
+            for g in prepared.food_groups:
+                value = cast(Any, model.slack_group[p.name, d, g]).value
+                total += float(value or 0)
         for g in prepared.food_groups:
-            value = cast(Any, model.slack_group[d, g]).value
+            value = cast(Any, model.slack_weekly_group[p.name, g]).value
             total += float(value or 0)
-    for g in prepared.food_groups:
-        value = cast(Any, model.slack_weekly_group[g]).value
-        total += float(value or 0)
     for attr in (
         "slack_cal_min",
         "slack_cal_max",
         "slack_fiber_min",
-        "slack_fiber_max",
         "slack_protein_min",
         "slack_protein_max",
-        "slack_snack",
     ):
         if hasattr(model, attr):
-            for d in prepared.days:
-                value = cast(Any, getattr(model, attr)[d]).value
-                total += float(value or 0)
+            var = getattr(model, attr)
+            for idx in var:
+                total += float(cast(Any, var[idx]).value or 0)
+    if hasattr(model, "slack_snack"):
+        var = model.slack_snack
+        for idx in var:
+            total += float(cast(Any, var[idx]).value or 0)
     for attr in (
         "slack_weekly_cal_min",
         "slack_weekly_cal_max",

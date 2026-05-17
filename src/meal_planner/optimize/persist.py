@@ -15,15 +15,41 @@ from meal_planner.db.plan_repo import (
     insert_plan_config,
     insert_plan_day,
     insert_plan_day_group,
+    insert_plan_day_profile,
     insert_plan_meal,
     insert_plan_run,
     update_plan_totals,
 )
+from meal_planner.db.profile_repo import upsert_profile
 from meal_planner.logging import get_logger
 from meal_planner.metrics import MetricName
-from meal_planner.optimize.run import OptimizeResult
+from meal_planner.optimize.run import SHARED_KEY, OptimizeResult
 
 log = get_logger(__name__)
+
+MACRO_COLUMNS = (
+    "per_serving_kcal",
+    "per_serving_fiber_g",
+    "per_serving_protein_g",
+    "per_serving_fat_g",
+    "per_serving_carbs_g",
+)
+
+
+def _macros(
+    nutrition: pd.DataFrame, recipe_id: int
+) -> tuple[Decimal, Decimal, Decimal, Decimal, Decimal]:
+    if recipe_id not in nutrition.index:
+        return (Decimal(0),) * 5
+    row = nutrition.loc[recipe_id]
+    values: list[Decimal] = []
+    for col in MACRO_COLUMNS:
+        v = row.get(col)
+        if v is None or pd.isna(v):
+            values.append(Decimal(0))
+        else:
+            values.append(Decimal(str(v)))
+    return values[0], values[1], values[2], values[3], values[4]
 
 
 def write_plan(settings: Settings, result: OptimizeResult, *, engine: Engine | None = None) -> int:
@@ -32,6 +58,24 @@ def write_plan(settings: Settings, result: OptimizeResult, *, engine: Engine | N
     run_time = datetime.now(UTC)
 
     with eng.begin() as conn:
+        profile_ids: dict[str, int] = {}
+        configured_by_name = {p.name: p for p in settings.household.profiles}
+        for spec in result.prepared.profiles:
+            profile_targets = configured_by_name.get(spec.name)
+            if profile_targets is None:
+                from meal_planner.config import ProfileTargets
+
+                profile_targets = ProfileTargets(
+                    name=spec.name,
+                    display_name=spec.display_name,
+                    calories_daily_min=spec.calories_daily_min,
+                    calories_daily_max=spec.calories_daily_max,
+                    fiber_daily_min=spec.fiber_daily_min,
+                    protein_daily_min=spec.protein_daily_min,
+                    protein_daily_max=spec.protein_daily_max,
+                )
+            profile_ids[spec.name] = upsert_profile(conn, profile_targets)
+
         config_id = insert_plan_config(
             conn,
             name=f"run_{run_time.isoformat()}",
@@ -69,64 +113,90 @@ def write_plan(settings: Settings, result: OptimizeResult, *, engine: Engine | N
         )
 
         targets = settings.daily_dozen_targets
-        total_kcal = Decimal(0)
-        total_fiber = Decimal(0)
-        daily_violations = 0
+        prepared = result.prepared
+        profile_names = [p.name for p in prepared.profiles]
 
-        for day, meals in result.plan.items():
-            day_kcal = Decimal(0)
-            day_fiber = Decimal(0)
-            day_protein = Decimal(0)
-            day_fat = Decimal(0)
-            day_carbs = Decimal(0)
-            selected = [r for r in meals.values() if r is not None]
-            for meal_type, recipe_id in meals.items():
-                insert_plan_meal(
+        household_total_kcal = Decimal(0)
+        household_total_fiber = Decimal(0)
+        daily_violations = 0
+        all_recipe_ids: list[int] = []
+
+        for day, slot_to_cell in result.plan.items():
+            for meal_type, cell in slot_to_cell.items():
+                for owner, recipe_id in cell.items():
+                    if recipe_id is not None:
+                        all_recipe_ids.append(recipe_id)
+                    profile_id = 0 if owner == SHARED_KEY else profile_ids.get(owner, 0)
+                    insert_plan_meal(
+                        conn,
+                        plan_run_id=plan_run_id,
+                        day=day,
+                        meal_type=meal_type,
+                        recipe_id=recipe_id,
+                        profile_id=profile_id,
+                    )
+
+            shared_recipes_today: list[int] = []
+            for mt in prepared.shared_meal_types:
+                cell = slot_to_cell.get(mt, {})
+                shared_recipe = cell.get(SHARED_KEY)
+                if shared_recipe is not None:
+                    shared_recipes_today.append(shared_recipe)
+
+            per_profile_recipes: dict[str, list[int]] = {
+                p: list(shared_recipes_today) for p in profile_names
+            }
+            for mt in prepared.per_user_meal_types:
+                cell = slot_to_cell.get(mt, {})
+                for owner, recipe_id in cell.items():
+                    if owner == SHARED_KEY or recipe_id is None:
+                        continue
+                    per_profile_recipes.setdefault(owner, []).append(recipe_id)
+
+            day_household = [Decimal(0)] * 5
+            for profile_name in profile_names:
+                profile_id = profile_ids[profile_name]
+                totals = [Decimal(0)] * 5
+                for r in per_profile_recipes[profile_name]:
+                    macros = _macros(nutrition, r)
+                    for i, v in enumerate(macros):
+                        totals[i] += v
+                insert_plan_day_profile(
                     conn,
                     plan_run_id=plan_run_id,
                     day=day,
-                    meal_type=meal_type,
-                    recipe_id=recipe_id,
+                    profile_id=profile_id,
+                    kcal=totals[0],
+                    fiber_g=totals[1],
+                    protein_g=totals[2],
+                    fat_g=totals[3],
+                    carbs_g=totals[4],
                 )
-            for r in selected:
-                if r not in nutrition.index:
-                    continue
-                row = nutrition.loc[r]
-                for column, accumulator in (
-                    ("per_serving_kcal", "day_kcal"),
-                    ("per_serving_fiber_g", "day_fiber"),
-                    ("per_serving_protein_g", "day_protein"),
-                    ("per_serving_fat_g", "day_fat"),
-                    ("per_serving_carbs_g", "day_carbs"),
-                ):
-                    value = row.get(column)
-                    if value is None or pd.isna(value):
-                        continue
-                    increment = Decimal(str(value))
-                    if accumulator == "day_kcal":
-                        day_kcal += increment
-                    elif accumulator == "day_fiber":
-                        day_fiber += increment
-                    elif accumulator == "day_protein":
-                        day_protein += increment
-                    elif accumulator == "day_fat":
-                        day_fat += increment
-                    elif accumulator == "day_carbs":
-                        day_carbs += increment
+                for i in range(5):
+                    day_household[i] += totals[i]
+
             insert_plan_day(
                 conn,
                 plan_run_id=plan_run_id,
                 day=day,
-                kcal=day_kcal,
-                fiber_g=day_fiber,
-                protein_g=day_protein,
-                fat_g=day_fat,
-                carbs_g=day_carbs,
+                kcal=day_household[0],
+                fiber_g=day_household[1],
+                protein_g=day_household[2],
+                fat_g=day_household[3],
+                carbs_g=day_household[4],
             )
-            total_kcal += day_kcal
-            total_fiber += day_fiber
+            household_total_kcal += day_household[0]
+            household_total_fiber += day_household[1]
 
-            day_ingredients = ingredients[ingredients["recipe_id"].isin(selected)]
+            day_recipe_ids = list(
+                {
+                    recipe_id
+                    for cell in slot_to_cell.values()
+                    for recipe_id in cell.values()
+                    if recipe_id is not None
+                }
+            )
+            day_ingredients = ingredients[ingredients["recipe_id"].isin(day_recipe_ids)]
             day_ingredients = day_ingredients[day_ingredients["portion_met"].astype(bool)]
             grouped = day_ingredients.groupby("food_group") if not day_ingredients.empty else None
 
@@ -150,25 +220,30 @@ def write_plan(settings: Settings, result: OptimizeResult, *, engine: Engine | N
                     daily_portions=daily_portions,
                 )
 
-            for recipe_id in selected:
-                meal_type_for_recipe = next(
-                    (mt for mt, rid in meals.items() if rid == recipe_id), None
-                )
-                if meal_type_for_recipe is not None:
+            for cell in slot_to_cell.values():
+                meal_type_hits = {
+                    recipe_id: mt for mt, c in slot_to_cell.items() for recipe_id in c.values()
+                }
+                for recipe_id in cell.values():
+                    if recipe_id is None:
+                        continue
+                    mt_for_recipe = meal_type_hits.get(recipe_id)
+                    if mt_for_recipe is None:
+                        continue
                     insert_meal_history(
                         conn,
                         recipe_id=recipe_id,
-                        meal_type=meal_type_for_recipe,
+                        meal_type=mt_for_recipe,
                         planned_for=date.today(),
                     )
 
         update_plan_totals(
-            conn, plan_run_id=plan_run_id, total_kcal=total_kcal, total_fiber=total_fiber
+            conn,
+            plan_run_id=plan_run_id,
+            total_kcal=household_total_kcal,
+            total_fiber=household_total_fiber,
         )
 
-        all_recipe_ids = [
-            r for day_meals in result.plan.values() for r in day_meals.values() if r is not None
-        ]
         all_selected = ingredients[ingredients["recipe_id"].isin(all_recipe_ids)]
         unique_ingredients = int(all_selected["ingredient_canonical"].nunique())
         unique_groups = int(all_selected["food_group"].nunique())

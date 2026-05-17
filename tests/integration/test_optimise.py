@@ -130,6 +130,16 @@ def test_meal_history_recorded(clean_db: Engine, settings_with_fixtures: Setting
     assert n > 0
 
 
+def _flatten_picks(plan: dict[int, dict[str, dict[str, int | None]]]) -> dict[int, list[int]]:
+    out: dict[int, list[int]] = {}
+    for day, slot_to_cell in plan.items():
+        for cell in slot_to_cell.values():
+            for recipe_id in cell.values():
+                if recipe_id is not None:
+                    out.setdefault(day, []).append(recipe_id)
+    return out
+
+
 @pytest.mark.integration
 def test_no_recipe_appears_twice_on_same_day(
     clean_db: Engine, settings_with_fixtures: Settings
@@ -138,19 +148,17 @@ def test_no_recipe_appears_twice_on_same_day(
     parse_ingredients(settings_with_fixtures, engine=clean_db)
     _seed_recipe_nutrition(clean_db)
     result = optimize_plan(settings_with_fixtures, engine=clean_db)
-    for day, meals in result.plan.items():
-        picked = [r for r in meals.values() if r is not None]
+    by_day = _flatten_picks(result.plan)
+    for day, picked in by_day.items():
         assert len(picked) == len(
             set(picked)
-        ), f"day {day}: recipe appears in more than one slot: {meals}"
+        ), f"day {day}: recipe appears in more than one slot: {picked}"
 
 
-def _count_consecutive_repeats(result_plan: dict[int, dict[str, int | None]]) -> int:
+def _count_consecutive_repeats(plan: dict[int, dict[str, dict[str, int | None]]]) -> int:
     appearances: dict[int, list[int]] = {}
-    for day, meals in result_plan.items():
-        for recipe_id in meals.values():
-            if recipe_id is None:
-                continue
+    for day, picks in _flatten_picks(plan).items():
+        for recipe_id in picks:
             appearances.setdefault(recipe_id, []).append(day)
     count = 0
     for days in appearances.values():
@@ -193,6 +201,132 @@ def test_spacing_penalty_reduces_consecutive_repeats(
         f"spacing penalty did not reduce consecutive repeats: "
         f"base={base_consecutive} nudged={nudged_consecutive}"
     )
+
+
+def _user_profile_ids(engine: Engine) -> list[int]:
+    with engine.connect() as conn:
+        rows = conn.execute(text("SELECT profile_id FROM meal_planning.user_profile")).fetchall()
+    return [int(r[0]) for r in rows]
+
+
+@pytest.mark.integration
+def test_household_two_users_share_lunch_and_dinner(
+    clean_db: Engine, settings_with_fixtures: Settings
+) -> None:
+    from meal_planner.config import HouseholdSettings, ProfileTargets
+
+    ingest_local_html(settings_with_fixtures, engine=clean_db)
+    parse_ingredients(settings_with_fixtures, engine=clean_db)
+    with clean_db.begin() as conn:
+        rows = conn.execute(text("SELECT recipe_id FROM meal_planning.recipe")).fetchall()
+        for row in rows:
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO meal_planning.recipe_nutrition
+                        (recipe_id, calories_kcal, fiber_g, per_serving_kcal,
+                         per_serving_fiber_g, per_serving_protein_g)
+                    VALUES (:rid, 2000, 30, 500, 7.5, 25)
+                    ON CONFLICT (recipe_id) DO NOTHING
+                    """
+                ),
+                {"rid": int(row[0])},
+            )
+    household_settings = settings_with_fixtures.model_copy(
+        update={
+            "household": HouseholdSettings(
+                profiles=[
+                    ProfileTargets(name="user_a", calories_daily_min=1700, protein_daily_min=70),
+                    ProfileTargets(name="user_b", calories_daily_min=2100, protein_daily_min=100),
+                ],
+                shared_meal_types=["lunch", "dinner"],
+            ),
+            "optimizer": settings_with_fixtures.optimizer.model_copy(
+                update={"max_recipe_repeats": 30}
+            ),
+        }
+    )
+    result = optimize_plan(household_settings, engine=clean_db)
+    plan_run_id = write_plan(household_settings, result, engine=clean_db)
+
+    with clean_db.connect() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT day, meal_type, profile_id, recipe_id
+                FROM meal_planning.plan_meal
+                WHERE plan_run_id = :pr
+                ORDER BY day, meal_type, profile_id
+                """
+            ),
+            {"pr": plan_run_id},
+        ).fetchall()
+
+    shared_rows = [r for r in rows if r[1] in ("lunch", "dinner")]
+    by_day_meal: dict[tuple[int, str], list[tuple[int, int | None]]] = {}
+    for d, m, pid, rid in shared_rows:
+        by_day_meal.setdefault((int(d), str(m)), []).append((int(pid), rid))
+    for (day, meal), entries in by_day_meal.items():
+        assert len(entries) == 1, f"day {day} {meal} has more than one row: {entries}"
+        assert entries[0][0] == 0, f"day {day} {meal} should be shared (profile_id=0)"
+
+    profile_ids = {int(r[2]) for r in rows if r[1] in ("breakfast", "snack")}
+    real_profile_ids = {pid for pid in _user_profile_ids(clean_db) if pid != 0}
+    assert profile_ids == real_profile_ids
+
+
+@pytest.mark.integration
+def test_household_per_profile_day_totals_recorded(
+    clean_db: Engine, settings_with_fixtures: Settings
+) -> None:
+    from meal_planner.config import HouseholdSettings, ProfileTargets
+
+    ingest_local_html(settings_with_fixtures, engine=clean_db)
+    parse_ingredients(settings_with_fixtures, engine=clean_db)
+    with clean_db.begin() as conn:
+        rows = conn.execute(text("SELECT recipe_id FROM meal_planning.recipe")).fetchall()
+        for row in rows:
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO meal_planning.recipe_nutrition
+                        (recipe_id, calories_kcal, fiber_g, per_serving_kcal,
+                         per_serving_fiber_g, per_serving_protein_g)
+                    VALUES (:rid, 2000, 30, 500, 7.5, 25)
+                    ON CONFLICT (recipe_id) DO NOTHING
+                    """
+                ),
+                {"rid": int(row[0])},
+            )
+    household_settings = settings_with_fixtures.model_copy(
+        update={
+            "household": HouseholdSettings(
+                profiles=[
+                    ProfileTargets(name="alpha", calories_daily_min=1600),
+                    ProfileTargets(name="beta", calories_daily_min=2200),
+                ],
+                shared_meal_types=["lunch", "dinner"],
+            ),
+            "optimizer": settings_with_fixtures.optimizer.model_copy(
+                update={"max_recipe_repeats": 30}
+            ),
+        }
+    )
+    result = optimize_plan(household_settings, engine=clean_db)
+    plan_run_id = write_plan(household_settings, result, engine=clean_db)
+    with clean_db.connect() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT day, profile_id, kcal FROM meal_planning.plan_day_profile
+                WHERE plan_run_id = :pr ORDER BY day, profile_id
+                """
+            ),
+            {"pr": plan_run_id},
+        ).fetchall()
+    assert len(rows) == 7 * 2
+    for _, _, kcal in rows:
+        assert kcal is not None and float(kcal) > 0
 
 
 @pytest.mark.integration

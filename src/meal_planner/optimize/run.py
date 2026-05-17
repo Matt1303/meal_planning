@@ -84,14 +84,26 @@ _LEVELS: list[tuple[RelaxationLevel, ModelOptions]] = [
 ]
 
 
+PlanCell = dict[str, int | None]
+
+
 @dataclass(frozen=True)
 class OptimizeResult:
-    plan: dict[int, dict[str, int | None]]
+    """Selected plan. plan[day][meal_type] maps profile_name -> recipe_id.
+
+    Profile name 'shared' (or rather: the literal string from ProfileSpec.name when the
+    meal type is in shared_meal_types) is used for shared slots.
+    """
+
+    plan: dict[int, dict[str, PlanCell]]
     solver_status: str
     solver_seconds: float
     slack_total: float
     relaxation_level: int
     prepared: PreparedData
+
+
+SHARED_KEY = "__shared__"
 
 
 def optimize_plan(settings: Settings, *, engine: Engine | None = None) -> OptimizeResult:
@@ -218,15 +230,28 @@ def _maybe_force_snack_optional(
     return settings
 
 
-def _extract_plan(model: Any, prepared: PreparedData) -> dict[int, dict[str, int | None]]:
-    plan: dict[int, dict[str, int | None]] = {
-        d: dict.fromkeys(prepared.meal_types, None) for d in prepared.days
-    }
+def _extract_plan(model: Any, prepared: PreparedData) -> dict[int, dict[str, PlanCell]]:
+    plan: dict[int, dict[str, PlanCell]] = {}
     for d in prepared.days:
+        plan[d] = {}
         for m in prepared.meal_types:
+            cell: PlanCell = {}
+            plan[d][m] = cell
+        for m in prepared.shared_meal_types:
             for r in prepared.recipes:
-                value = cast(Any, model.x[r, d, m]).value
+                value = cast(Any, model.x_shared[r, d, m]).value
                 if value is not None and value > 0.5:
-                    plan[d][m] = r
+                    plan[d][m][SHARED_KEY] = r
                     break
+            else:
+                plan[d][m][SHARED_KEY] = None
+        for p in prepared.profiles:
+            for m in prepared.per_user_meal_types:
+                for r in prepared.recipes:
+                    value = cast(Any, model.x_user[p.name, r, d, m]).value
+                    if value is not None and value > 0.5:
+                        plan[d][m][p.name] = r
+                        break
+                else:
+                    plan[d][m][p.name] = None
     return plan

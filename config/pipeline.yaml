@@ -81,3 +81,11 @@ optimizer:
   fiber_weekly_min: 210
   weekly_group_portions_min: {}
   include_non_plant: false
+
+household:
+  # When non-empty, the optimiser solves for the listed profiles jointly:
+  # meal types listed in shared_meal_types are picked once (same recipe for
+  # both users on a day); other meal types are picked per profile.
+  # Leave profiles: [] to run in single-user mode using optimizer.* targets.
+  profiles: []
+  shared_meal_types: []

@@ -8,7 +8,53 @@ from typing import cast
 import pandas as pd
 from sqlalchemy import Engine
 
-from meal_planner.config import Settings
+from meal_planner.config import ProfileTargets, Settings
+
+
+@dataclass(frozen=True)
+class ProfileSpec:
+    name: str
+    display_name: str
+    calories_daily_min: int | None
+    calories_daily_max: int | None
+    fiber_daily_min: int | None
+    protein_daily_min: int | None
+    protein_daily_max: int | None
+
+    @classmethod
+    def from_targets(cls, profile: ProfileTargets) -> ProfileSpec:
+        return cls(
+            name=profile.name,
+            display_name=profile.display_name or profile.name,
+            calories_daily_min=profile.calories_daily_min,
+            calories_daily_max=profile.calories_daily_max,
+            fiber_daily_min=profile.fiber_daily_min,
+            protein_daily_min=profile.protein_daily_min,
+            protein_daily_max=profile.protein_daily_max,
+        )
+
+
+def derive_profiles(settings: Settings) -> list[ProfileSpec]:
+    if settings.household.profiles:
+        return [ProfileSpec.from_targets(p) for p in settings.household.profiles]
+    opt = settings.optimizer
+    return [
+        ProfileSpec(
+            name="default",
+            display_name="Default",
+            calories_daily_min=opt.calories_daily_min,
+            calories_daily_max=opt.calories_daily_max,
+            fiber_daily_min=opt.fiber_daily_min,
+            protein_daily_min=opt.protein_daily_min,
+            protein_daily_max=opt.protein_daily_max,
+        )
+    ]
+
+
+def split_meal_types(settings: Settings) -> tuple[list[str], list[str]]:
+    shared = [m for m in settings.meal_types if m in settings.household.shared_meal_types]
+    per_user = [m for m in settings.meal_types if m not in shared]
+    return shared, per_user
 
 
 @dataclass(frozen=True)
@@ -87,6 +133,9 @@ class PreparedData:
     recipes: list[int]
     days: list[int]
     meal_types: list[str]
+    shared_meal_types: list[str]
+    per_user_meal_types: list[str]
+    profiles: list[ProfileSpec]
     ingredients_canonical: list[str]
     food_groups: list[str]
     rating: dict[int, float]
@@ -192,10 +241,16 @@ def prepare(inputs: ModelInputs, settings: Settings) -> PreparedData:
                 float(value) if value is not None and not pd.isna(value) else 0.0
             )
 
+    profiles = derive_profiles(settings)
+    shared_meal_types, per_user_meal_types = split_meal_types(settings)
+
     return PreparedData(
         recipes=recipes_list,
         days=days,
         meal_types=meal_types,
+        shared_meal_types=shared_meal_types,
+        per_user_meal_types=per_user_meal_types,
+        profiles=profiles,
         ingredients_canonical=ingredients_canonical,
         food_groups=food_groups,
         rating=rating,
