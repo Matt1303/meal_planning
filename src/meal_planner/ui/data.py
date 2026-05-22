@@ -59,6 +59,21 @@ class DayPlan:
 
 
 @dataclass(frozen=True)
+class IngredientLine:
+    raw_text: str
+    ingredient_canonical: str | None
+    per_serving_grams: float | None
+    kcal: float
+    protein_g: float
+    fiber_g: float
+    fat_g: float
+    carbs_g: float
+    match_source_name: str | None
+    match_score: float | None
+    source: str | None
+
+
+@dataclass(frozen=True)
 class PlanView:
     plan_run_id: int
     run_time: str
@@ -67,6 +82,7 @@ class PlanView:
     slack_total: float
     correlation_id: str | None
     days: list[DayPlan]
+    recipe_ingredients: dict[int, list[IngredientLine]] = field(default_factory=dict)
 
 
 def _targets_for(opt: OptimizerSettings, profile: ProfileTargets | None) -> ProfileTargets:
@@ -134,6 +150,57 @@ def _load_recipe_ratings(engine: Engine, recipe_ids: list[int]) -> dict[int, flo
             {"ids": recipe_ids},
         ).fetchall()
     return {int(r[0]): float(r[1]) for r in rows}
+
+
+def _load_ingredient_breakdown(
+    engine: Engine, recipe_ids: list[int]
+) -> dict[int, list[IngredientLine]]:
+    if not recipe_ids:
+        return {}
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT ri.recipe_id, ri.raw_text, ri.ingredient_canonical,
+                       ri.per_serving_grams,
+                       c.kcal_per_100g, c.protein_g_per_100g, c.fiber_g_per_100g,
+                       c.fat_g_per_100g, c.carbs_g_per_100g,
+                       c.match_source_name, c.match_score, c.source
+                FROM meal_planning.recipe_ingredient ri
+                LEFT JOIN meal_planning.ingredient_nutrition_cache c
+                       ON c.ingredient_canonical = ri.ingredient_canonical
+                WHERE ri.recipe_id = ANY(:ids)
+                ORDER BY ri.recipe_id, ri.raw_text
+                """
+            ),
+            {"ids": recipe_ids},
+        ).fetchall()
+
+    result: dict[int, list[IngredientLine]] = {}
+    for row in rows:
+        recipe_id = int(row[0])
+        grams = float(row[3]) if row[3] is not None else None
+        kcal_per_100g = _f(row[4])
+        protein_per_100g = _f(row[5])
+        fiber_per_100g = _f(row[6])
+        fat_per_100g = _f(row[7])
+        carbs_per_100g = _f(row[8])
+        factor = (grams / 100.0) if grams is not None else 0.0
+        line = IngredientLine(
+            raw_text=str(row[1]),
+            ingredient_canonical=str(row[2]) if row[2] is not None else None,
+            per_serving_grams=grams,
+            kcal=kcal_per_100g * factor,
+            protein_g=protein_per_100g * factor,
+            fiber_g=fiber_per_100g * factor,
+            fat_g=fat_per_100g * factor,
+            carbs_g=carbs_per_100g * factor,
+            match_source_name=str(row[9]) if row[9] is not None else None,
+            match_score=float(row[10]) if row[10] is not None else None,
+            source=str(row[11]) if row[11] is not None else None,
+        )
+        result.setdefault(recipe_id, []).append(line)
+    return result
 
 
 def _load_last_eaten(engine: Engine, recipe_ids: list[int], before: date | None) -> dict[int, date]:
@@ -226,6 +293,7 @@ def load_plan_view(
 
     recipe_ids = sorted({int(row[3]) for row in meal_rows if row[3] is not None})
     rating_by_recipe = _load_recipe_ratings(eng, recipe_ids)
+    ingredients_by_recipe = _load_ingredient_breakdown(eng, recipe_ids)
     run_date: date | None = None
     if run_row[1] is not None:
         candidate = run_row[1]
@@ -335,6 +403,7 @@ def load_plan_view(
         slack_total=float(run_row[4] or 0),
         correlation_id=run_row[5],
         days=plan_days,
+        recipe_ingredients=ingredients_by_recipe,
     )
 
 

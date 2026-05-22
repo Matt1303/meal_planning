@@ -20,11 +20,14 @@ from meal_planner.ui.charts import (
 from meal_planner.ui.data import (
     DayPlan,
     DayPlanForProfile,
+    IngredientLine,
     MealEntry,
     PlanView,
     load_latest_plan_view,
     load_plan_view,
 )
+
+LOW_CONFIDENCE_MATCH = 90.0
 
 ALL_MEAL_TYPES = ("breakfast", "lunch", "dinner", "snack")
 DEFAULT_SHARED = ("lunch", "dinner")
@@ -61,7 +64,54 @@ def _last_eaten_caption(last_eaten: date | None) -> str:
     return f"Last planned for: {last_eaten.isoformat()}"
 
 
-def _meal_detail_popover(meal: MealEntry, day_user: DayPlanForProfile) -> None:
+def _render_ingredient_table(ingredients: list[IngredientLine], meal_kcal: float) -> None:
+    rows = []
+    flagged: list[str] = []
+    for ing in ingredients:
+        grams_disp = f"{ing.per_serving_grams:.0f}" if ing.per_serving_grams is not None else "—"
+        match_text = ing.match_source_name or "—"
+        if ing.match_score is not None and ing.match_source_name is not None:
+            match_text += f" ({ing.match_score:.0f})"
+        if ing.source:
+            match_text += f" · {ing.source}"
+        warn = []
+        if ing.per_serving_grams is None:
+            warn.append("no grams")
+        if ing.match_score is not None and ing.match_score < LOW_CONFIDENCE_MATCH:
+            warn.append("low-confidence match")
+        if ing.match_source_name is None and ing.ingredient_canonical is not None:
+            warn.append("no nutrition match")
+        if warn:
+            flagged.append(f"`{ing.raw_text}` — {', '.join(warn)}")
+        rows.append(
+            {
+                "Ingredient": ing.raw_text,
+                "g/serving": grams_disp,
+                "kcal": f"{ing.kcal:.0f}",
+                "protein": f"{ing.protein_g:.1f}",
+                "fibre": f"{ing.fiber_g:.1f}",
+                "fat": f"{ing.fat_g:.1f}",
+                "carbs": f"{ing.carbs_g:.1f}",
+                "matched to": match_text,
+            }
+        )
+    st.dataframe(rows, hide_index=True, use_container_width=True)
+    ingredient_kcal_sum = sum(ing.kcal for ing in ingredients)
+    if meal_kcal > 0:
+        delta = ingredient_kcal_sum - meal_kcal
+        if abs(delta) > max(20.0, 0.1 * meal_kcal):
+            st.caption(
+                f"Ingredient sum: {ingredient_kcal_sum:.0f} kcal — "
+                f"differs from stored per-serving total ({meal_kcal:.0f} kcal) "
+                f"by {delta:+.0f}. Likely coverage gap below."
+            )
+    if flagged:
+        st.warning("Suspicious entries: " + "; ".join(flagged))
+
+
+def _meal_detail_popover(
+    meal: MealEntry, day_user: DayPlanForProfile, ingredients: list[IngredientLine] | None
+) -> None:
     with st.popover("Macros & detail", use_container_width=True):
         st.markdown(f"**{meal.title}**")
         if meal.rating is not None:
@@ -82,9 +132,17 @@ def _meal_detail_popover(meal: MealEntry, day_user: DayPlanForProfile) -> None:
         if day_user.day_kcal > 0:
             share = 100.0 * meal.kcal / day_user.day_kcal
             st.caption(f"This meal contributes {share:.0f}% of today's calories.")
+        if ingredients:
+            st.divider()
+            st.markdown("**Per-ingredient contribution**")
+            _render_ingredient_table(ingredients, meal.kcal)
 
 
-def _render_profile_day(day_user: DayPlanForProfile, meal_types: list[str]) -> None:
+def _render_profile_day(
+    day_user: DayPlanForProfile,
+    meal_types: list[str],
+    ingredients_by_recipe: dict[int, list[IngredientLine]],
+) -> None:
     with st.container(border=True):
         st.markdown(f"**{day_user.display_name}**")
         for meal_type in meal_types:
@@ -120,7 +178,10 @@ def _render_profile_day(day_user: DayPlanForProfile, meal_types: list[str]) -> N
                     f"Last planned: {entry.last_eaten.isoformat()}</span>"
                 )
             st.markdown(heading, unsafe_allow_html=True)
-            _meal_detail_popover(entry, day_user)
+            recipe_ings = (
+                ingredients_by_recipe.get(entry.recipe_id) if entry.recipe_id is not None else None
+            )
+            _meal_detail_popover(entry, day_user, recipe_ings)
 
         st.divider()
         cols = st.columns(5)
@@ -131,15 +192,19 @@ def _render_profile_day(day_user: DayPlanForProfile, meal_types: list[str]) -> N
         cols[4].metric("Carbs", f"{day_user.day_carbs_g:.0f} g")
 
 
-def _render_day(day: DayPlan, meal_types: list[str]) -> None:
+def _render_day(
+    day: DayPlan,
+    meal_types: list[str],
+    ingredients_by_recipe: dict[int, list[IngredientLine]],
+) -> None:
     st.subheader(f"Day {day.day}")
     if len(day.per_profile) == 1:
-        _render_profile_day(day.per_profile[0], meal_types)
+        _render_profile_day(day.per_profile[0], meal_types, ingredients_by_recipe)
         return
     cols = st.columns(len(day.per_profile))
     for i, user_day in enumerate(day.per_profile):
         with cols[i]:
-            _render_profile_day(user_day, meal_types)
+            _render_profile_day(user_day, meal_types, ingredients_by_recipe)
 
 
 def _render_plan(view: PlanView, meal_types: list[str]) -> None:
@@ -150,7 +215,7 @@ def _render_plan(view: PlanView, meal_types: list[str]) -> None:
     header[3].metric("Slack total", f"{view.slack_total:.1f}")
     st.caption(f"Run time: {view.run_time} · correlation_id: {view.correlation_id}")
     for day in view.days:
-        _render_day(day, meal_types)
+        _render_day(day, meal_types, view.recipe_ingredients)
 
 
 def _render_dashboard(view: PlanView, settings: Settings) -> None:
