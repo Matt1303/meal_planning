@@ -166,6 +166,9 @@ _DEMOTED_TERMS = (
 )
 
 
+_BAD_FOOD_NAMES: frozenset[str] = frozenset({"nan", "", "none", "n/a", "na"})
+
+
 def _lookup_cofid(df: pd.DataFrame, ingredient: str) -> NutritionResult | None:
     name_col, nutrient_cols = _guess_columns(df)
     if not name_col:
@@ -182,22 +185,33 @@ def _lookup_cofid(df: pd.DataFrame, ingredient: str) -> NutritionResult | None:
     if not raw_candidates:
         return None
 
+    query_tokens = [t for t in cleaned.split() if len(t) > 2]
+    head_token = query_tokens[0] if query_tokens else ""
+
     best_idx: int | None = None
     best_score = -1.0
     for _, score, idx in raw_candidates:
         idx_int = int(idx)
         full = names[idx_int]
+        if full.strip() in _BAD_FOOD_NAMES or base_names[idx_int].strip() in _BAD_FOOD_NAMES:
+            continue
         adj = float(score)
         if any(term in full for term in _DEMOTED_TERMS):
             adj -= 25
         if any(qual in full for qual in _PREFERRED_QUALIFIERS):
             adj += 5
+        if head_token:
+            full_tokens = re.split(r"[\s,()/-]+", full)
+            singular = head_token[:-1] if head_token.endswith("s") else head_token
+            plural = head_token if head_token.endswith("s") else head_token + "s"
+            if not any(t in (head_token, singular, plural) for t in full_tokens):
+                adj -= 30
         adj -= 0.01 * len(full)
         if adj > best_score:
             best_score = adj
             best_idx = idx_int
 
-    if best_idx is None or best_score < 60:
+    if best_idx is None or best_score < 70:
         return None
     row = df.iloc[best_idx]
     return NutritionResult(

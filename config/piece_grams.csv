@@ -1,0 +1,94 @@
+ingredient_canonical,grams_per_piece,note
+banana,120,medium banana flesh
+broccoli,600,whole head
+broccolini,200,bunch
+cauliflower,800,whole head
+avocado,200,medium flesh+seed
+avocados,200,medium flesh+seed
+lemon,60,medium whole
+lemons,60,medium whole
+lime,50,medium whole
+limes,50,medium whole
+onion,150,medium yellow onion
+onions,150,medium yellow onion
+red onion,150,medium
+spring onion,15,one stalk
+shallot,30,medium
+garlic clove,5,one clove
+garlic,5,one clove (default when no count)
+ginger,30,2 inch piece
+apple,180,medium
+apples,180,medium
+pear,170,medium
+pears,170,medium
+peach,150,medium
+plum,65,medium
+nectarine,140,medium
+orange,130,medium peeled
+oranges,130,medium peeled
+clementine,75,one
+satsuma,75,one
+mandarin,75,one
+grapefruit,250,half flesh
+kiwi,75,one peeled
+kiwis,75,one peeled
+mango,200,one flesh only
+mangoes,200,one flesh only
+strawberry,15,one
+strawberries,15,one
+blueberry,1.5,one berry
+blueberries,1.5,one berry
+raspberry,3,one berry
+raspberries,3,one berry
+blackberry,5,one berry
+fig,40,one
+figs,40,one
+date,8,one Medjool
+dates,8,one Medjool
+prune,8,one
+prunes,8,one
+tomato,120,medium
+tomatoes,120,medium
+cherry tomato,15,one
+cherry tomatoes,15,one
+potato,170,medium
+potatoes,170,medium
+sweet potato,200,medium
+sweet potatoes,200,medium
+carrot,75,medium
+carrots,75,medium
+cucumber,300,one whole
+courgette,200,one medium
+courgettes,200,one medium
+zucchini,200,one medium
+aubergine,300,one medium
+aubergines,300,one medium
+eggplant,300,one medium
+eggplants,300,one medium
+butternut squash,1000,one medium
+pumpkin,1000,one medium
+pepper,150,one bell pepper
+peppers,150,one bell pepper
+bell pepper,150,one
+red pepper,150,one
+yellow pepper,150,one
+green pepper,150,one
+chilli,10,one fresh
+chillies,10,one fresh
+chili,10,one fresh
+celery,40,one stalk
+celery stalk,40,one stalk
+fennel,300,one bulb
+leek,200,one medium
+leeks,200,one medium
+spring greens,150,handful
+romaine lettuce,300,one head
+lettuce,300,one head
+beetroot,100,one medium
+beetroots,100,one medium
+parsnip,150,one medium
+parsnips,150,one medium
+egg,50,one large
+eggs,50,one large
+corn cob,180,one ear
+sweetcorn,180,one ear

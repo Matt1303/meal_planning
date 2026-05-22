@@ -188,13 +188,41 @@ def regex_parse_quantity(text: str) -> tuple[Decimal | None, str | None]:
     return None, None
 
 
+_FRACTION_PREFIX = re.compile(
+    r"\b(?P<frac>quarter|half|three[ -]quarters?|two[ -]thirds?|one[ -]third|third)\s+(?:an?\s+|of\s+(?:an?\s+)?)?",
+    re.IGNORECASE,
+)
+_FRACTION_VALUES: dict[str, str] = {
+    "quarter": "0.25",
+    "third": "0.333",
+    "one third": "0.333",
+    "two thirds": "0.667",
+    "two-thirds": "0.667",
+    "half": "0.5",
+    "three quarters": "0.75",
+    "three-quarters": "0.75",
+}
+
+_QUANTULUM_NULL_UNITS = {"year", "years", "dimensionless"}
+
+
+def _preprocess_fraction_words(text: str) -> str:
+    def _replace(match: re.Match[str]) -> str:
+        frac = match.group("frac").lower().replace("-", " ")
+        value = _FRACTION_VALUES.get(frac)
+        return f"{value} " if value else match.group(0)
+
+    return _FRACTION_PREFIX.sub(_replace, text)
+
+
 def quantulum_parse(text: str) -> tuple[Decimal | None, str | None, bool]:
     try:
         from quantulum3 import parser as qty_parser
     except Exception:
         return None, None, True
+    preprocessed = _preprocess_fraction_words(text)
     try:
-        results = qty_parser.parse(text)
+        results = qty_parser.parse(preprocessed)
     except Exception:
         return None, None, False
     if not results:
@@ -207,12 +235,14 @@ def quantulum_parse(text: str) -> tuple[Decimal | None, str | None, bool]:
             value = Decimal(str(raw_value))
         except (InvalidOperation, ValueError):
             value = None
-    unit = None
+    unit: str | None = None
     unit_obj = getattr(first, "unit", None)
     if unit_obj is not None:
         unit_name = getattr(unit_obj, "name", None)
         if isinstance(unit_name, str):
             unit = unit_name
+    if unit is not None and unit.strip().lower() in _QUANTULUM_NULL_UNITS:
+        unit = None
     return value, unit, True
 
 
@@ -233,7 +263,11 @@ def build_context(
 ) -> ParseContext:
     food_groups = load_food_groups(_resolve_food_paths(settings))
     synonyms = load_synonyms(settings.parse.synonyms_path)
-    units = UnitTable.from_paths(settings.parse.unit_grams_path, settings.parse.density_path)
+    units = UnitTable.from_paths(
+        settings.parse.unit_grams_path,
+        settings.parse.density_path,
+        piece_path=settings.parse.piece_grams_path,
+    )
     return ParseContext(
         food_groups=food_groups,
         synonyms=synonyms,

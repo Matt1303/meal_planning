@@ -41,6 +41,7 @@ class ParseSettings(BaseModel):
     synonyms_path: Path = Path("config/ingredient_synonyms.csv")
     unit_grams_path: Path = Path("config/unit_grams.csv")
     density_path: Path = Path("config/density_g_per_ml.csv")
+    piece_grams_path: Path = Path("config/piece_grams.csv")
     non_plant_terms_path: Path = Path("config/non_plant_terms.yaml")
 
 
