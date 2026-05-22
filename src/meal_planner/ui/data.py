@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import Engine, text
@@ -19,6 +20,8 @@ class MealEntry:
     protein_g: float
     fat_g: float
     carbs_g: float
+    rating: float | None = None
+    last_eaten: date | None = None
 
 
 @dataclass(frozen=True)
@@ -117,6 +120,45 @@ def _load_profile_records(engine: Engine, plan_run_id: int) -> dict[int, str]:
     return {int(r[0]): str(r[1]) for r in rows}
 
 
+def _load_recipe_ratings(engine: Engine, recipe_ids: list[int]) -> dict[int, float]:
+    if not recipe_ids:
+        return {}
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT recipe_id, rating FROM meal_planning.recipe
+                WHERE recipe_id = ANY(:ids) AND rating IS NOT NULL
+                """
+            ),
+            {"ids": recipe_ids},
+        ).fetchall()
+    return {int(r[0]): float(r[1]) for r in rows}
+
+
+def _load_last_eaten(engine: Engine, recipe_ids: list[int], before: date | None) -> dict[int, date]:
+    if not recipe_ids:
+        return {}
+    params: dict[str, object] = {"ids": recipe_ids}
+    where_before = ""
+    if before is not None:
+        where_before = "AND planned_for < :before"
+        params["before"] = before
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                f"""
+                SELECT recipe_id, MAX(planned_for)
+                FROM meal_planning.meal_history
+                WHERE recipe_id = ANY(:ids) {where_before}
+                GROUP BY recipe_id
+                """
+            ),
+            params,
+        ).fetchall()
+    return {int(r[0]): r[1] for r in rows if r[1] is not None}
+
+
 def load_plan_view(
     plan_run_id: int,
     opt: OptimizerSettings,
@@ -182,6 +224,14 @@ def load_plan_view(
 
     profile_lookup = _load_profile_records(eng, plan_run_id)
 
+    recipe_ids = sorted({int(row[3]) for row in meal_rows if row[3] is not None})
+    rating_by_recipe = _load_recipe_ratings(eng, recipe_ids)
+    run_date: date | None = None
+    if run_row[1] is not None:
+        candidate = run_row[1]
+        run_date = candidate.date() if hasattr(candidate, "date") else candidate
+    last_eaten_by_recipe = _load_last_eaten(eng, recipe_ids, run_date)
+
     # Bucket meals: per (day, profile_id) -> list of MealEntry
     meals_by_day_profile: dict[tuple[int, int], list[MealEntry]] = {}
     shared_meals_by_day: dict[int, list[MealEntry]] = {}
@@ -189,15 +239,18 @@ def load_plan_view(
         day_int = int(row[0])
         meal_type = str(row[1])
         profile_id = int(row[2])
+        recipe_id = int(row[3]) if row[3] is not None else None
         entry = MealEntry(
             meal_type=meal_type,
             title=row[4],
-            recipe_id=int(row[3]) if row[3] is not None else None,
+            recipe_id=recipe_id,
             kcal=_f(row[5]),
             fiber_g=_f(row[6]),
             protein_g=_f(row[7]),
             fat_g=_f(row[8]),
             carbs_g=_f(row[9]),
+            rating=rating_by_recipe.get(recipe_id) if recipe_id is not None else None,
+            last_eaten=last_eaten_by_recipe.get(recipe_id) if recipe_id is not None else None,
         )
         if profile_id == 0:
             shared_meals_by_day.setdefault(day_int, []).append(entry)

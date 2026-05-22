@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from typing import cast
 
@@ -10,6 +11,12 @@ from meal_planner.correlation import new_correlation_id, set_correlation_id
 from meal_planner.db import get_engine, wait_for_db
 from meal_planner.logging import configure as configure_logging
 from meal_planner.optimize import optimize_plan, write_plan
+from meal_planner.ui.charts import (
+    daily_dozen_heatmap,
+    daily_macros_chart,
+    day_meal_stack_chart,
+    recipe_frequency_chart,
+)
 from meal_planner.ui.data import (
     DayPlan,
     DayPlanForProfile,
@@ -41,6 +48,42 @@ def _format_gap(label: str, value: float, unit: str) -> str:
     return f"{label}: ~{value:.0f} {unit}"
 
 
+def _stars(rating: float | None) -> str:
+    if rating is None:
+        return ""
+    rounded = max(0, min(5, round(rating)))
+    return "★" * rounded + "☆" * (5 - rounded) + f" ({rating:.1f})"
+
+
+def _last_eaten_caption(last_eaten: date | None) -> str:
+    if last_eaten is None:
+        return "First appearance in your recorded plans."
+    return f"Last planned for: {last_eaten.isoformat()}"
+
+
+def _meal_detail_popover(meal: MealEntry, day_user: DayPlanForProfile) -> None:
+    with st.popover("Macros & detail", use_container_width=True):
+        st.markdown(f"**{meal.title}**")
+        if meal.rating is not None:
+            st.caption(f"Recipe rating: {_stars(meal.rating)}")
+        st.caption(_last_eaten_caption(meal.last_eaten))
+        st.divider()
+        rows = [
+            ("Calories", f"{meal.kcal:.0f} kcal"),
+            ("Protein", f"{meal.protein_g:.1f} g"),
+            ("Fibre", f"{meal.fiber_g:.1f} g"),
+            ("Fat", f"{meal.fat_g:.1f} g"),
+            ("Carbs", f"{meal.carbs_g:.1f} g"),
+        ]
+        for label, value in rows:
+            cols = st.columns([2, 3])
+            cols[0].markdown(f"**{label}**")
+            cols[1].markdown(value)
+        if day_user.day_kcal > 0:
+            share = 100.0 * meal.kcal / day_user.day_kcal
+            st.caption(f"This meal contributes {share:.0f}% of today's calories.")
+
+
 def _render_profile_day(day_user: DayPlanForProfile, meal_types: list[str]) -> None:
     with st.container(border=True):
         st.markdown(f"**{day_user.display_name}**")
@@ -63,12 +106,21 @@ def _render_profile_day(day_user: DayPlanForProfile, meal_types: list[str]) -> N
                     )
                 else:
                     st.write(f"**{meal_type.title()}**: _(none)_")
-            else:
-                st.markdown(
-                    f"**{meal_type.title()}**: {entry.title}  \n"
-                    f"<span style='color:#666;font-size:0.85em'>{_format_macro(entry)}</span>",
-                    unsafe_allow_html=True,
+                continue
+
+            heading = f"**{meal_type.title()}**: {entry.title}"
+            if entry.rating is not None:
+                heading += f"  \n<span style='color:#b58900;font-size:0.85em'>{_stars(entry.rating)}</span>"
+            heading += (
+                f"  \n<span style='color:#666;font-size:0.85em'>{_format_macro(entry)}</span>"
+            )
+            if entry.last_eaten is not None:
+                heading += (
+                    f"  \n<span style='color:#888;font-size:0.8em'>"
+                    f"Last planned: {entry.last_eaten.isoformat()}</span>"
                 )
+            st.markdown(heading, unsafe_allow_html=True)
+            _meal_detail_popover(entry, day_user)
 
         st.divider()
         cols = st.columns(5)
@@ -99,6 +151,20 @@ def _render_plan(view: PlanView, meal_types: list[str]) -> None:
     st.caption(f"Run time: {view.run_time} · correlation_id: {view.correlation_id}")
     for day in view.days:
         _render_day(day, meal_types)
+
+
+def _render_dashboard(view: PlanView, settings: Settings) -> None:
+    st.markdown("### Daily macros vs targets")
+    st.plotly_chart(
+        daily_macros_chart(view, settings.optimizer, settings.household.profiles),
+        use_container_width=True,
+    )
+    st.markdown("### Calories per meal across the week")
+    st.plotly_chart(day_meal_stack_chart(view), use_container_width=True)
+    st.markdown("### Recipe frequency by user")
+    st.plotly_chart(recipe_frequency_chart(view), use_container_width=True)
+    st.markdown("### Daily Dozen coverage")
+    st.plotly_chart(daily_dozen_heatmap(view), use_container_width=True)
 
 
 def _run_pipeline(settings: Settings) -> int:
@@ -183,13 +249,30 @@ def render() -> None:
         with st.sidebar.expander("User targets", expanded=True):
             profiles = [_profile_widgets("User", "single", "default")]
 
-    st.sidebar.header("Variety")
+    st.sidebar.header("Variety & ratings")
     spacing_weight = st.sidebar.slider(
         "Spacing penalty weight",
         min_value=0.0,
         max_value=10.0,
         value=float(base_settings.optimizer.spacing_weight),
         step=0.5,
+        help="Higher = stronger penalty for repeating a recipe on consecutive days.",
+    )
+    rating_weight = st.sidebar.slider(
+        "Rating weight",
+        min_value=0.0,
+        max_value=10.0,
+        value=float(base_settings.optimizer.rating_weight),
+        step=0.5,
+        help="Higher = solver prefers higher-rated recipes more strongly.",
+    )
+    min_rating = st.sidebar.slider(
+        "Minimum recipe rating",
+        min_value=0.0,
+        max_value=5.0,
+        value=float(base_settings.optimizer.min_rating),
+        step=0.5,
+        help="Recipes below this rating are filtered out before optimisation.",
     )
     max_repeats = st.sidebar.slider(
         "Max times any recipe can repeat in a week",
@@ -213,6 +296,8 @@ def render() -> None:
             "optimizer": base_settings.optimizer.model_copy(
                 update={
                     "spacing_weight": spacing_weight,
+                    "rating_weight": rating_weight,
+                    "min_rating": min_rating,
                     "max_recipe_repeats": max_repeats,
                     "planning_horizon_days": horizon,
                     "snack_optional": "snack" in base_settings.meal_types,
@@ -245,7 +330,11 @@ def render() -> None:
         st.info("No plan run yet — set parameters in the sidebar and click **Generate plan**.")
         return
 
-    _render_plan(view, list(base_settings.meal_types))
+    plan_tab, dashboard_tab = st.tabs(["Plan view", "Dashboard"])
+    with plan_tab:
+        _render_plan(view, list(base_settings.meal_types))
+    with dashboard_tab:
+        _render_dashboard(view, settings)
 
 
 def main() -> None:

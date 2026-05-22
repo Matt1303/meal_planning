@@ -54,7 +54,7 @@ llm-openai = ["openai>=1.50"]
 llm-anthropic = ["anthropic>=0.70"]
 orchestrate = ["prefect>=2.16,<3", "griffe<0.40"]
 serve = ["fastapi>=0.110", "uvicorn>=0.30"]
-ui = ["streamlit>=1.40"]
+ui = ["streamlit>=1.40", "plotly>=5.20"]
 
 [project.scripts]
 meal-planner = "meal_planner.cli:app"
@@ -122,6 +122,7 @@ module = [
   "prefect.*",
   "fastapi.*",
   "uvicorn.*",
+  "plotly.*",
 ]
 ignore_missing_imports = true
 
