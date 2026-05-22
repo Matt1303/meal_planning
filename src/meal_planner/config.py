@@ -50,6 +50,13 @@ class NutritionSettings(BaseModel):
     cofid_url: str = ""
     usda_api_key: str = ""
     coverage_min_ratio: float = Field(default=0.6, ge=0, le=1)
+    open_food_facts_enabled: bool = True
+    open_food_facts_user_agent: str = (
+        "meal-planner - python - https://github.com/Matt1303/meal_planning"
+    )
+    open_food_facts_timeout: int = Field(default=10, gt=0)
+    open_food_facts_countries: str = "en:united-kingdom"
+    open_food_facts_lc: str = "en"
 
 
 class OptimizerSettings(BaseModel):

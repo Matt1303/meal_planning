@@ -8,7 +8,7 @@ from typing import Any
 
 import pandas as pd
 import requests
-from rapidfuzz import process
+from rapidfuzz import fuzz, process
 from sqlalchemy import Connection, Engine
 
 from meal_planner.config import Settings
@@ -226,6 +226,261 @@ def _lookup_cofid(df: pd.DataFrame, ingredient: str) -> NutritionResult | None:
     )
 
 
+_OFF_SEARCH_URL = "https://world.openfoodfacts.org/cgi/search.pl"
+
+
+_OFF_COMPOSITE_TERMS = (
+    "bar",
+    "bars",
+    "snack",
+    "cookie",
+    "cookies",
+    "biscuit",
+    "biscuits",
+    "cake",
+    "cakes",
+    "crisps",
+    "chips",
+    "popcorn",
+    "crackers",
+    "wafers",
+    "drink",
+    "shake",
+    "smoothie",
+    "salad",
+    "soup",
+    "stew",
+    "curry",
+    "sauce",
+    "dressing",
+    "pie",
+    "pudding",
+    "mousse",
+    "ice cream",
+    "sorbet",
+    "hummus",
+    "houmous",
+    "dip",
+    "pesto",
+    "spread",
+    "jam",
+    "preserve",
+    "mix",
+    "blend",
+    "flavored",
+    "flavoured",
+    "with banana",
+    "with chocolate",
+    "with strawberry",
+    "kebab",
+    "kofta",
+    "koftas",
+    "balls",
+    "nuggets",
+    "fingers",
+    "mince",
+    "burger",
+    "burgers",
+    "sticks",
+    "fritters",
+    "pancakes",
+    "waffles",
+    "muffin",
+    "muffins",
+    "loaf",
+    "loaves",
+    "pizza",
+    "pasta",
+    "noodles",
+    "wrap",
+    "wraps",
+    "sandwich",
+    "topping",
+    "filling",
+    "frosting",
+    "icing",
+    "bites",
+    "patties",
+    "stir fry",
+    "ready meal",
+    "meal kit",
+    "bolognese",
+    "energy pouch",
+    "pouch",
+    "rosti",
+    "rissole",
+    "fritter",
+    "souffle",
+)
+
+
+def _off_pick(products: list[dict[str, Any]], ingredient: str) -> dict[str, Any] | None:
+    cleaned = _clean_for_fuzzy(ingredient)
+    if not products or not cleaned:
+        return None
+    query_tokens = [t for t in cleaned.split() if len(t) > 2]
+    head_token = query_tokens[0] if query_tokens else ""
+    query_token_count = max(len(query_tokens), 1)
+
+    best: dict[str, Any] | None = None
+    best_score = -1.0
+    for product in products:
+        if not isinstance(product, dict):
+            continue
+        nutriments = product.get("nutriments")
+        if not isinstance(nutriments, dict):
+            continue
+        if nutriments.get("energy-kcal_100g") is None and nutriments.get("energy_100g") is None:
+            continue
+        if nutriments.get("proteins_100g") is None:
+            continue
+        name_raw = str(product.get("product_name") or product.get("generic_name") or "").lower()
+        if not name_raw:
+            continue
+        name_clean = _clean_for_fuzzy(name_raw)
+        if not name_clean:
+            continue
+        product_tokens = [t for t in name_clean.split() if t]
+        product_token_count = max(len(product_tokens), 1)
+        # Hard cap: a single-token ingredient (e.g. "broccoli") must not match
+        # a product name with > 3 tokens, otherwise OFF picks branded composites.
+        if query_token_count == 1 and product_token_count > 3:
+            continue
+        if query_token_count >= 2 and product_token_count > query_token_count + 4:
+            continue
+        # For single-token queries, the query word must anchor the product
+        # name: either be the first significant token, or be the only
+        # ingredient-like token after dropping qualifiers (organic, fresh,
+        # raw, ...). This rejects "Cocoa & Banana" for "banana" while
+        # accepting "Organic Almond Milk" for "almond milk".
+        if query_token_count == 1 and head_token:
+            qualifier_tokens = {
+                "organic",
+                "fresh",
+                "raw",
+                "whole",
+                "frozen",
+                "dried",
+                "powder",
+                "natural",
+                "unsweetened",
+                "shelled",
+                "ground",
+            }
+            significant = [t for t in product_tokens if t not in qualifier_tokens]
+            singular = head_token[:-1] if head_token.endswith("s") else head_token
+            plural = head_token if head_token.endswith("s") else head_token + "s"
+            if not significant or significant[0] not in (head_token, singular, plural):
+                continue
+        score = float(fuzz.WRatio(cleaned, name_clean))
+        score -= 6 * max(0, product_token_count - query_token_count - 1)
+        if " & " in name_raw or " and " in f" {name_raw} ":
+            score -= 35
+        if head_token:
+            singular = head_token[:-1] if head_token.endswith("s") else head_token
+            plural = head_token if head_token.endswith("s") else head_token + "s"
+            if not any(t in (head_token, singular, plural) for t in product_tokens):
+                score -= 40
+        if any(term in name_clean for term in _OFF_COMPOSITE_TERMS):
+            score -= 35
+        if any(term in name_clean for term in _DEMOTED_TERMS):
+            score -= 20
+        completeness = product.get("completeness")
+        if completeness is not None:
+            try:
+                score += float(completeness) * 5
+            except (TypeError, ValueError):
+                pass
+        if nutriments.get("fiber_100g") is not None:
+            score += 2
+        if nutriments.get("carbohydrates_100g") is not None:
+            score += 1
+        if score > best_score:
+            best_score = score
+            best = product
+    if best is None or best_score < 75:
+        return None
+    return best
+
+
+def _decimal_or_none(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except (ArithmeticError, ValueError):
+        return None
+
+
+def _lookup_open_food_facts(
+    ingredient: str,
+    *,
+    user_agent: str,
+    timeout: int,
+    enabled: bool,
+    countries: str = "",
+    lc: str = "en",
+) -> NutritionResult | None:
+    if not enabled:
+        return None
+    cleaned = _clean_for_fuzzy(ingredient)
+    if not cleaned:
+        return None
+    params: dict[str, str | int] = {
+        "search_terms": cleaned,
+        "search_simple": 1,
+        "action": "process",
+        "json": 1,
+        "page_size": 20,
+        "fields": "product_name,generic_name,nutriments,completeness,brands",
+        "sort_by": "popularity_key",
+        "lc": lc,
+    }
+    if countries:
+        params["countries"] = countries
+    headers = {"User-Agent": user_agent}
+    last_error: Exception | None = None
+    for _attempt in range(3):
+        try:
+            resp = requests.get(_OFF_SEARCH_URL, params=params, headers=headers, timeout=timeout)
+        except requests.RequestException as exc:
+            last_error = exc
+            continue
+        if resp.status_code == 200:
+            try:
+                payload = resp.json()
+            except ValueError:
+                return None
+            products_raw = payload.get("products") if isinstance(payload, dict) else None
+            products = [p for p in products_raw if isinstance(p, dict)] if products_raw else []
+            picked = _off_pick(products, ingredient)
+            if picked is None:
+                return None
+            nutriments = picked.get("nutriments") or {}
+            kcal = nutriments.get("energy-kcal_100g")
+            if kcal is None and nutriments.get("energy_100g") is not None:
+                try:
+                    kcal = float(nutriments["energy_100g"]) / 4.184
+                except (TypeError, ValueError):
+                    kcal = None
+            return NutritionResult(
+                kcal_per_100g=_decimal_or_none(kcal),
+                fiber_g_per_100g=_decimal_or_none(nutriments.get("fiber_100g")),
+                protein_g_per_100g=_decimal_or_none(nutriments.get("proteins_100g")),
+                fat_g_per_100g=_decimal_or_none(nutriments.get("fat_100g")),
+                carbs_g_per_100g=_decimal_or_none(nutriments.get("carbohydrates_100g")),
+                source="open_food_facts",
+                match_score=None,
+                match_source_name=str(picked.get("product_name") or ""),
+            )
+        if resp.status_code in {429, 502, 503, 504}:
+            continue
+        return None
+    if last_error is not None:
+        log.warning("nutrition.off_failed", error=str(last_error))
+    return None
+
+
 def _lookup_usda(api_key: str, ingredient: str) -> NutritionResult | None:
     if not api_key:
         return None
@@ -323,12 +578,25 @@ def lookup_nutrition(
     ingredient: str,
     df: pd.DataFrame | None,
     usda_api_key: str,
+    *,
+    off_enabled: bool = True,
+    off_user_agent: str = "meal-planner/0.2",
+    off_timeout: int = 10,
+    off_countries: str = "",
+    off_lc: str = "en",
 ) -> NutritionResult | None:
     cached = fetch_cache(conn, ingredient)
     if cached:
         return _from_cached(cached)
-    result: NutritionResult | None = None
-    if df is not None:
+    result: NutritionResult | None = _lookup_open_food_facts(
+        ingredient,
+        user_agent=off_user_agent,
+        timeout=off_timeout,
+        enabled=off_enabled,
+        countries=off_countries,
+        lc=off_lc,
+    )
+    if result is None and df is not None:
         result = _lookup_cofid(df, ingredient)
     if result is None:
         result = _lookup_usda(usda_api_key, ingredient)
@@ -368,6 +636,11 @@ def enrich_nutrition(
     correlation_id = current_correlation_id()
     cofid = _load_cofid(settings.nutrition.cofid_path)
     usda_key = settings.nutrition.usda_api_key
+    off_enabled = settings.nutrition.open_food_facts_enabled
+    off_user_agent = settings.nutrition.open_food_facts_user_agent
+    off_timeout = settings.nutrition.open_food_facts_timeout
+    off_countries = settings.nutrition.open_food_facts_countries
+    off_lc = settings.nutrition.open_food_facts_lc
 
     with eng.begin() as conn:
         rows = fetch_enrichment_inputs(conn)
@@ -379,7 +652,17 @@ def enrich_nutrition(
             total += 1
             if not canonical or per_serving_grams is None:
                 continue
-            result = lookup_nutrition(conn, canonical, cofid, usda_key)
+            result = lookup_nutrition(
+                conn,
+                canonical,
+                cofid,
+                usda_key,
+                off_enabled=off_enabled,
+                off_user_agent=off_user_agent,
+                off_timeout=off_timeout,
+                off_countries=off_countries,
+                off_lc=off_lc,
+            )
             if result is None:
                 continue
             covered += 1
