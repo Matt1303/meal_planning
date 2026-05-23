@@ -25,7 +25,13 @@ from meal_planner.db.nutrition_repo import (
     upsert_recipe_nutrition,
 )
 from meal_planner.llm import get_llm_client
-from meal_planner.llm.base import NullLLM, NutritionMatchCandidate
+from meal_planner.llm.base import (
+    LLMClient,
+    NullLLM,
+    NutritionMacros,
+    NutritionMatchCandidate,
+    NutritionQuery,
+)
 from meal_planner.logging import get_logger
 from meal_planner.metrics import MetricName
 
@@ -635,6 +641,54 @@ def _from_cached(cache: CachedNutrition) -> NutritionResult:
     )
 
 
+_CONFIDENCE_RANK = {"unknown": 0, "low": 1, "medium": 2, "high": 3}
+
+
+def _confidence_meets(value: str, minimum: str) -> bool:
+    return _CONFIDENCE_RANK.get(value, 0) >= _CONFIDENCE_RANK.get(minimum, 2)
+
+
+def _macros_to_result(macros: NutritionMacros) -> NutritionResult:
+    return NutritionResult(
+        kcal_per_100g=_decimal_or_none(macros.kcal_per_100g),
+        fiber_g_per_100g=_decimal_or_none(macros.fiber_g_per_100g),
+        protein_g_per_100g=_decimal_or_none(macros.protein_g_per_100g),
+        fat_g_per_100g=_decimal_or_none(macros.fat_g_per_100g),
+        carbs_g_per_100g=_decimal_or_none(macros.carbs_g_per_100g),
+        source=f"claude_{macros.confidence}",
+        match_score=Decimal("100") if macros.confidence == "high" else Decimal("85"),
+        match_source_name=macros.notes or macros.ingredient_canonical,
+    )
+
+
+def _fetch_claude_macros(
+    llm: LLMClient,
+    canonicals: list[str],
+    sample_text: dict[str, str],
+    batch_size: int,
+) -> dict[str, NutritionMacros]:
+    if not canonicals:
+        return {}
+    result: dict[str, NutritionMacros] = {}
+    for start in range(0, len(canonicals), batch_size):
+        batch = canonicals[start : start + batch_size]
+        queries = [
+            NutritionQuery(
+                ingredient_canonical=canonical,
+                sample_raw_text=sample_text.get(canonical, canonical),
+            )
+            for canonical in batch
+        ]
+        try:
+            macros = llm.fetch_nutrition_macros(queries)
+        except Exception as exc:
+            log.warning("nutrition.claude_failed", error=str(exc), batch=start)
+            continue
+        for item in macros:
+            result[item.ingredient_canonical] = item
+    return result
+
+
 def _verify_and_correct(
     conn: Connection,
     settings: Settings,
@@ -781,8 +835,59 @@ def enrich_nutrition(
     with eng.begin() as conn:
         rows = fetch_enrichment_inputs(conn)
         unique_canonicals = sorted({str(r[1]) for r in rows if r[1]})
+        sample_text = fetch_sample_raw_text(conn)
+
         nutrition_by_canonical: dict[str, NutritionResult] = {}
+        cached_canonicals: set[str] = set()
         for canonical in unique_canonicals:
+            cached = fetch_cache(conn, canonical)
+            if cached is not None:
+                nutrition_by_canonical[canonical] = _from_cached(cached)
+                cached_canonicals.add(canonical)
+
+        if settings.nutrition.llm_macros_primary:
+            llm_client = get_llm_client(settings.llm)
+            if not isinstance(llm_client, NullLLM):
+                pending = [c for c in unique_canonicals if c not in cached_canonicals]
+                log.info("nutrition.claude_primary_start", to_query=len(pending))
+                claude_macros = _fetch_claude_macros(
+                    llm_client,
+                    pending,
+                    sample_text,
+                    settings.nutrition.llm_macros_batch_size,
+                )
+                min_conf = settings.nutrition.llm_macros_min_confidence
+                accepted = 0
+                for canonical, macros in claude_macros.items():
+                    if not _confidence_meets(macros.confidence, min_conf):
+                        continue
+                    if macros.kcal_per_100g is None:
+                        continue
+                    claude_result = _macros_to_result(macros)
+                    nutrition_by_canonical[canonical] = claude_result
+                    upsert_cache(
+                        conn,
+                        ingredient_canonical=canonical,
+                        kcal_per_100g=claude_result.kcal_per_100g,
+                        fiber_g_per_100g=claude_result.fiber_g_per_100g,
+                        protein_g_per_100g=claude_result.protein_g_per_100g,
+                        fat_g_per_100g=claude_result.fat_g_per_100g,
+                        carbs_g_per_100g=claude_result.carbs_g_per_100g,
+                        source=claude_result.source,
+                        match_score=claude_result.match_score,
+                        match_source_name=claude_result.match_source_name,
+                    )
+                    accepted += 1
+                log.info(
+                    "nutrition.claude_primary_complete",
+                    queried=len(pending),
+                    returned=len(claude_macros),
+                    accepted=accepted,
+                )
+
+        for canonical in unique_canonicals:
+            if canonical in nutrition_by_canonical:
+                continue
             result = lookup_nutrition(
                 conn,
                 canonical,

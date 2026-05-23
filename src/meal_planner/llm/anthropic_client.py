@@ -9,8 +9,10 @@ from pydantic import TypeAdapter, ValidationError
 from meal_planner.llm.base import (
     LLMResponse,
     LLMUsage,
+    NutritionMacros,
     NutritionMatchCandidate,
     NutritionMatchVerdict,
+    NutritionQuery,
     ParsedLine,
 )
 
@@ -114,8 +116,79 @@ class AnthropicLLM:
         raw = _extract_text(resp.content)
         return _parse_verdicts(raw, candidates)
 
+    def fetch_nutrition_macros(self, queries: Sequence[NutritionQuery]) -> list[NutritionMacros]:
+        if not queries:
+            return []
+        system_prompt = (
+            "You are a UK nutritionist. For each ingredient, return realistic "
+            "per-100g (or per-100ml for liquids) nutrition values, as the food "
+            "would normally be consumed in a recipe.\n"
+            "Key rules:\n"
+            "- Prepared liquid stocks/broths: ~5 kcal/100g, NOT the dried cube.\n"
+            "- Tinned chopped tomatoes / passata: ~22 kcal/100g, similar to "
+            "fresh tomato, NOT cherry-tomato-raw.\n"
+            "- Fresh onion/garlic/ginger: raw values, NOT granules/powder.\n"
+            "- Plant milks (almond/oat/soy/coconut milk drink): the drink form "
+            "(~20-60 kcal/100ml), NOT the whole nut.\n"
+            "- Oils: full 884 kcal/100g.\n"
+            "- For anything you are uncertain about, set confidence=low and "
+            "still provide your best estimate.\n"
+            "- For non-foods (salt, pepper, herbs/spices used in tiny "
+            "quantities) you may set kcal/protein/etc to 0 with confidence=high.\n"
+            "Reply with ONLY a JSON array. Each object: {\n"
+            '  "ingredient_canonical": str,\n'
+            '  "kcal_per_100g": number,\n'
+            '  "protein_g_per_100g": number,\n'
+            '  "fiber_g_per_100g": number,\n'
+            '  "fat_g_per_100g": number,\n'
+            '  "carbs_g_per_100g": number,\n'
+            '  "confidence": "high"|"medium"|"low"|"unknown",\n'
+            '  "notes": str (optional)\n'
+            "}"
+        )
+        items_for_prompt = [
+            {
+                "ingredient_canonical": q.ingredient_canonical,
+                "sample_raw_text": q.sample_raw_text,
+            }
+            for q in queries
+        ]
+        user_prompt = (
+            "Give per-100g nutrition for each of these ingredients (the "
+            "sample_raw_text shows how the ingredient appears in a recipe):\n"
+            + json.dumps(items_for_prompt, indent=2)
+        )
+        resp = self._client.messages.create(
+            model=self._model,
+            max_tokens=8192,
+            temperature=0,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+        raw = _extract_text(resp.content)
+        return _parse_macros(raw, queries)
+
 
 _VERDICT_ADAPTER = TypeAdapter(list[NutritionMatchVerdict])
+_MACROS_ADAPTER = TypeAdapter(list[NutritionMacros])
+
+
+def _parse_macros(text: str, queries: Sequence[NutritionQuery]) -> list[NutritionMacros]:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.strip("`")
+        if cleaned.lower().startswith("json"):
+            cleaned = cleaned[4:].lstrip()
+    try:
+        loaded = json.loads(cleaned)
+    except (json.JSONDecodeError, ValueError):
+        return []
+    try:
+        items = _MACROS_ADAPTER.validate_python(loaded)
+    except ValidationError:
+        return []
+    known = {q.ingredient_canonical for q in queries}
+    return [item for item in items if item.ingredient_canonical in known]
 
 
 def _parse_verdicts(

@@ -77,6 +77,9 @@ class NutritionSettings(BaseModel):
     llm_verify_enabled: bool = True
     llm_verify_score_threshold: float = Field(default=90.0, ge=0, le=120)
     llm_verify_batch_size: int = Field(default=20, ge=1, le=50)
+    llm_macros_primary: bool = True
+    llm_macros_batch_size: int = Field(default=30, ge=1, le=80)
+    llm_macros_min_confidence: str = Field(default="medium", pattern="^(high|medium|low)$")
 
 
 class OptimizerSettings(BaseModel):

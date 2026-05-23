@@ -148,3 +148,95 @@ def test_cooking_oil_absorption_scales_grams() -> None:
     per_serving = Decimal("22")
     effective = per_serving * absorption
     assert effective == Decimal("11.0")
+
+
+@pytest.mark.unit
+def test_parse_macros_round_trip() -> None:
+    from meal_planner.llm.anthropic_client import _parse_macros
+    from meal_planner.llm.base import NutritionQuery
+
+    queries = [
+        NutritionQuery(
+            ingredient_canonical="vegetable stock", sample_raw_text="700 ml vegetable stock"
+        ),
+        NutritionQuery(ingredient_canonical="onion", sample_raw_text="1 onion"),
+    ]
+    reply = json.dumps(
+        [
+            {
+                "ingredient_canonical": "vegetable stock",
+                "kcal_per_100g": 5,
+                "protein_g_per_100g": 0.3,
+                "fiber_g_per_100g": 0,
+                "fat_g_per_100g": 0.1,
+                "carbs_g_per_100g": 0.7,
+                "confidence": "high",
+                "notes": "prepared liquid stock",
+            },
+            {
+                "ingredient_canonical": "onion",
+                "kcal_per_100g": 40,
+                "protein_g_per_100g": 1.1,
+                "fiber_g_per_100g": 1.7,
+                "fat_g_per_100g": 0.1,
+                "carbs_g_per_100g": 9.3,
+                "confidence": "high",
+            },
+        ]
+    )
+    macros = _parse_macros(reply, queries)
+    assert {m.ingredient_canonical for m in macros} == {"vegetable stock", "onion"}
+    stock = next(m for m in macros if m.ingredient_canonical == "vegetable stock")
+    assert stock.kcal_per_100g == 5
+    assert stock.confidence == "high"
+
+
+@pytest.mark.unit
+def test_parse_macros_filters_unknown_canonical() -> None:
+    from meal_planner.llm.anthropic_client import _parse_macros
+    from meal_planner.llm.base import NutritionQuery
+
+    queries = [NutritionQuery(ingredient_canonical="lemon", sample_raw_text="1/2 lemon")]
+    reply = json.dumps(
+        [
+            {
+                "ingredient_canonical": "lemon",
+                "kcal_per_100g": 29,
+                "protein_g_per_100g": 1.1,
+                "fiber_g_per_100g": 2.8,
+                "fat_g_per_100g": 0.3,
+                "carbs_g_per_100g": 9.3,
+                "confidence": "high",
+            },
+            {
+                "ingredient_canonical": "phantom",
+                "kcal_per_100g": 100,
+                "protein_g_per_100g": 5,
+                "fiber_g_per_100g": 1,
+                "fat_g_per_100g": 0.5,
+                "carbs_g_per_100g": 20,
+                "confidence": "low",
+            },
+        ]
+    )
+    macros = _parse_macros(reply, queries)
+    assert len(macros) == 1
+    assert macros[0].ingredient_canonical == "lemon"
+
+
+@pytest.mark.unit
+def test_parse_macros_handles_invalid_json() -> None:
+    from meal_planner.llm.anthropic_client import _parse_macros
+
+    assert _parse_macros("not json at all", []) == []
+
+
+@pytest.mark.unit
+def test_confidence_threshold_gating() -> None:
+    from meal_planner.nutrition import _confidence_meets
+
+    assert _confidence_meets("high", "high")
+    assert _confidence_meets("high", "medium")
+    assert _confidence_meets("medium", "medium")
+    assert not _confidence_meets("low", "medium")
+    assert not _confidence_meets("unknown", "low")

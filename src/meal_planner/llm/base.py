@@ -45,12 +45,32 @@ class NutritionMatchVerdict(BaseModel):
     reason: str | None = None
 
 
+class NutritionQuery(BaseModel):
+    ingredient_canonical: str
+    sample_raw_text: str
+
+
+class NutritionMacros(BaseModel):
+    ingredient_canonical: str
+    kcal_per_100g: float | None = None
+    protein_g_per_100g: float | None = None
+    fiber_g_per_100g: float | None = None
+    fat_g_per_100g: float | None = None
+    carbs_g_per_100g: float | None = None
+    confidence: str = Field(default="medium", pattern="^(high|medium|low|unknown)$")
+    notes: str | None = None
+
+
 class LLMClient(Protocol):
     def parse_lines(self, lines: Sequence[str], food_groups: Sequence[str]) -> LLMResponse: ...
 
     def verify_nutrition_matches(
         self, candidates: Sequence[NutritionMatchCandidate]
     ) -> list[NutritionMatchVerdict]: ...
+
+    def fetch_nutrition_macros(
+        self, queries: Sequence[NutritionQuery]
+    ) -> list[NutritionMacros]: ...
 
 
 class NullLLM:
@@ -60,4 +80,7 @@ class NullLLM:
     def verify_nutrition_matches(
         self, candidates: Sequence[NutritionMatchCandidate]
     ) -> list[NutritionMatchVerdict]:
+        return []
+
+    def fetch_nutrition_macros(self, queries: Sequence[NutritionQuery]) -> list[NutritionMacros]:
         return []

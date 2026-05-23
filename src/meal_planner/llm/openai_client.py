@@ -9,8 +9,10 @@ from pydantic import TypeAdapter, ValidationError
 from meal_planner.llm.base import (
     LLMResponse,
     LLMUsage,
+    NutritionMacros,
     NutritionMatchCandidate,
     NutritionMatchVerdict,
+    NutritionQuery,
     ParsedLine,
 )
 
@@ -66,6 +68,10 @@ class OpenAILLM:
     ) -> list[NutritionMatchVerdict]:
         # Verification is implemented in the Anthropic client; OpenAI falls
         # back to no-op so existing config without OpenAI verify is unaffected.
+        return []
+
+    def fetch_nutrition_macros(self, queries: Sequence[NutritionQuery]) -> list[NutritionMacros]:
+        # Direct-macros is implemented in the Anthropic client only for now.
         return []
 
 
