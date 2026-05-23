@@ -57,6 +57,26 @@ class NutritionSettings(BaseModel):
     open_food_facts_timeout: int = Field(default=10, gt=0)
     open_food_facts_countries: str = "en:united-kingdom"
     open_food_facts_lc: str = "en"
+    cooking_oils: list[str] = Field(
+        default_factory=lambda: [
+            "olive oil",
+            "extra virgin olive oil",
+            "vegetable oil",
+            "sunflower oil",
+            "rapeseed oil",
+            "canola oil",
+            "sesame oil",
+            "coconut oil",
+            "groundnut oil",
+            "peanut oil",
+            "avocado oil",
+            "ghee",
+        ]
+    )
+    cooking_oil_absorption: float = Field(default=0.5, ge=0, le=1)
+    llm_verify_enabled: bool = True
+    llm_verify_score_threshold: float = Field(default=90.0, ge=0, le=120)
+    llm_verify_batch_size: int = Field(default=20, ge=1, le=50)
 
 
 class OptimizerSettings(BaseModel):

@@ -6,7 +6,13 @@ from typing import Any, cast
 
 from pydantic import TypeAdapter, ValidationError
 
-from meal_planner.llm.base import LLMResponse, LLMUsage, ParsedLine
+from meal_planner.llm.base import (
+    LLMResponse,
+    LLMUsage,
+    NutritionMatchCandidate,
+    NutritionMatchVerdict,
+    ParsedLine,
+)
 
 
 class OpenAILLM:
@@ -54,6 +60,13 @@ class OpenAILLM:
                 items = retry_items
                 raw = retry_raw
         return LLMResponse(items=items, usage=usage, raw_text=raw)
+
+    def verify_nutrition_matches(
+        self, candidates: Sequence[NutritionMatchCandidate]
+    ) -> list[NutritionMatchVerdict]:
+        # Verification is implemented in the Anthropic client; OpenAI falls
+        # back to no-op so existing config without OpenAI verify is unaffected.
+        return []
 
 
 def _extract_text(resp: object) -> str:

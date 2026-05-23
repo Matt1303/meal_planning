@@ -17,11 +17,15 @@ from meal_planner.db import get_engine
 from meal_planner.db.metrics_repo import record_metric
 from meal_planner.db.nutrition_repo import (
     CachedNutrition,
+    delete_cache,
     fetch_cache,
     fetch_enrichment_inputs,
+    fetch_sample_raw_text,
     upsert_cache,
     upsert_recipe_nutrition,
 )
+from meal_planner.llm import get_llm_client
+from meal_planner.llm.base import NullLLM, NutritionMatchCandidate
 from meal_planner.logging import get_logger
 from meal_planner.metrics import MetricName
 
@@ -169,7 +173,9 @@ _DEMOTED_TERMS = (
 _BAD_FOOD_NAMES: frozenset[str] = frozenset({"nan", "", "none", "n/a", "na"})
 
 
-def _lookup_cofid(df: pd.DataFrame, ingredient: str) -> NutritionResult | None:
+def _lookup_cofid(
+    df: pd.DataFrame, ingredient: str, *, min_score: float = 70.0
+) -> NutritionResult | None:
     name_col, nutrient_cols = _guess_columns(df)
     if not name_col:
         return None
@@ -211,7 +217,7 @@ def _lookup_cofid(df: pd.DataFrame, ingredient: str) -> NutritionResult | None:
             best_score = adj
             best_idx = idx_int
 
-    if best_idx is None or best_score < 70:
+    if best_idx is None or best_score < min_score:
         return None
     row = df.iloc[best_idx]
     return NutritionResult(
@@ -629,6 +635,134 @@ def _from_cached(cache: CachedNutrition) -> NutritionResult:
     )
 
 
+def _verify_and_correct(
+    conn: Connection,
+    settings: Settings,
+    nutrition_by_canonical: dict[str, NutritionResult],
+    cofid: pd.DataFrame | None,
+) -> dict[str, NutritionResult]:
+    if not settings.nutrition.llm_verify_enabled:
+        return nutrition_by_canonical
+    llm = get_llm_client(settings.llm)
+    if isinstance(llm, NullLLM):
+        return nutrition_by_canonical
+
+    threshold = settings.nutrition.llm_verify_score_threshold
+    sample_text = fetch_sample_raw_text(conn)
+    suspects: list[NutritionMatchCandidate] = []
+    for canonical, result in nutrition_by_canonical.items():
+        # Treat a missing score (most OFF hits) as suspect — the OFF picker is
+        # heuristic, so we still want the LLM to sanity-check it.
+        score = float(result.match_score) if result.match_score is not None else 0.0
+        if score >= threshold:
+            continue
+        suspects.append(
+            NutritionMatchCandidate(
+                ingredient_canonical=canonical,
+                ingredient_raw_text=sample_text.get(canonical, canonical),
+                matched_food_name=result.match_source_name,
+                match_source=result.source or "unknown",
+                match_score=score,
+                kcal_per_100g=float(result.kcal_per_100g) if result.kcal_per_100g else None,
+                protein_per_100g=(
+                    float(result.protein_g_per_100g) if result.protein_g_per_100g else None
+                ),
+                fiber_per_100g=(
+                    float(result.fiber_g_per_100g) if result.fiber_g_per_100g else None
+                ),
+            )
+        )
+    if not suspects:
+        return nutrition_by_canonical
+
+    log.info("nutrition.llm_verify_start", suspect_count=len(suspects))
+    verdicts_by_canonical: dict[str, str] = {}
+    alternatives: dict[str, str] = {}
+    batch_size = settings.nutrition.llm_verify_batch_size
+    for start in range(0, len(suspects), batch_size):
+        batch = suspects[start : start + batch_size]
+        try:
+            verdicts = llm.verify_nutrition_matches(batch)
+        except Exception as exc:
+            log.warning("nutrition.llm_verify_failed", error=str(exc), batch=start)
+            continue
+        for verdict in verdicts:
+            verdicts_by_canonical[verdict.ingredient_canonical] = verdict.decision
+            if verdict.decision == "alternative" and verdict.alternative_query:
+                alternatives[verdict.ingredient_canonical] = verdict.alternative_query
+
+    rejected = 0
+    re_looked_up = 0
+    for canonical, decision in verdicts_by_canonical.items():
+        if decision == "reject":
+            delete_cache(conn, canonical)
+            nutrition_by_canonical.pop(canonical, None)
+            rejected += 1
+        elif decision == "alternative":
+            alt_query = alternatives.get(canonical)
+            if not alt_query:
+                continue
+            new_result = _lookup_with_fallback(
+                alt_query,
+                cofid,
+                settings,
+                prefer_canonical=canonical,
+                cofid_min_score=90.0,
+            )
+            if new_result is not None:
+                delete_cache(conn, canonical)
+                upsert_cache(
+                    conn,
+                    ingredient_canonical=canonical,
+                    kcal_per_100g=new_result.kcal_per_100g,
+                    fiber_g_per_100g=new_result.fiber_g_per_100g,
+                    protein_g_per_100g=new_result.protein_g_per_100g,
+                    fat_g_per_100g=new_result.fat_g_per_100g,
+                    carbs_g_per_100g=new_result.carbs_g_per_100g,
+                    source=f"{new_result.source}_llm",
+                    match_score=Decimal("100"),
+                    match_source_name=new_result.match_source_name,
+                )
+                nutrition_by_canonical[canonical] = new_result
+                re_looked_up += 1
+            else:
+                # LLM said the original match is wrong and the alternative
+                # query couldn't find a clean replacement; drop the bad match.
+                delete_cache(conn, canonical)
+                nutrition_by_canonical.pop(canonical, None)
+                rejected += 1
+    log.info(
+        "nutrition.llm_verify_complete",
+        suspect_count=len(suspects),
+        rejected=rejected,
+        re_looked_up=re_looked_up,
+    )
+    return nutrition_by_canonical
+
+
+def _lookup_with_fallback(
+    query: str,
+    cofid: pd.DataFrame | None,
+    settings: Settings,
+    *,
+    prefer_canonical: str = "",
+    cofid_min_score: float = 70.0,
+) -> NutritionResult | None:
+    result = _lookup_open_food_facts(
+        query,
+        user_agent=settings.nutrition.open_food_facts_user_agent,
+        timeout=settings.nutrition.open_food_facts_timeout,
+        enabled=settings.nutrition.open_food_facts_enabled,
+        countries=settings.nutrition.open_food_facts_countries,
+        lc=settings.nutrition.open_food_facts_lc,
+    )
+    if result is None and cofid is not None:
+        result = _lookup_cofid(cofid, query, min_score=cofid_min_score)
+    if result is None:
+        result = _lookup_usda(settings.nutrition.usda_api_key, query)
+    return result
+
+
 def enrich_nutrition(
     settings: Settings, *, engine: Engine | None = None, ignore_coverage: bool = False
 ) -> int:
@@ -641,17 +775,14 @@ def enrich_nutrition(
     off_timeout = settings.nutrition.open_food_facts_timeout
     off_countries = settings.nutrition.open_food_facts_countries
     off_lc = settings.nutrition.open_food_facts_lc
+    cooking_oils = {oil.strip().lower() for oil in settings.nutrition.cooking_oils}
+    oil_absorption = Decimal(str(settings.nutrition.cooking_oil_absorption))
 
     with eng.begin() as conn:
         rows = fetch_enrichment_inputs(conn)
-        recipes: dict[int, dict[str, Decimal]] = {}
-        servings_map: dict[int, Decimal] = {}
-        total = 0
-        covered = 0
-        for recipe_id, canonical, per_serving_grams, servings_count in rows:
-            total += 1
-            if not canonical or per_serving_grams is None:
-                continue
+        unique_canonicals = sorted({str(r[1]) for r in rows if r[1]})
+        nutrition_by_canonical: dict[str, NutritionResult] = {}
+        for canonical in unique_canonicals:
             result = lookup_nutrition(
                 conn,
                 canonical,
@@ -663,6 +794,20 @@ def enrich_nutrition(
                 off_countries=off_countries,
                 off_lc=off_lc,
             )
+            if result is not None:
+                nutrition_by_canonical[canonical] = result
+
+        nutrition_by_canonical = _verify_and_correct(conn, settings, nutrition_by_canonical, cofid)
+
+        recipes: dict[int, dict[str, Decimal]] = {}
+        servings_map: dict[int, Decimal] = {}
+        total = 0
+        covered = 0
+        for recipe_id, canonical, per_serving_grams, servings_count in rows:
+            total += 1
+            if not canonical or per_serving_grams is None:
+                continue
+            result = nutrition_by_canonical.get(canonical)
             if result is None:
                 continue
             covered += 1
@@ -677,7 +822,10 @@ def enrich_nutrition(
                 },
             )
             servings_map[recipe_id] = servings_count or Decimal(1)
-            scale = per_serving_grams / Decimal(100)
+            effective_grams = per_serving_grams
+            if canonical.strip().lower() in cooking_oils:
+                effective_grams = per_serving_grams * oil_absorption
+            scale = effective_grams / Decimal(100)
             if result.kcal_per_100g is not None:
                 agg["kcal"] += result.kcal_per_100g * scale
             if result.fiber_g_per_100g is not None:

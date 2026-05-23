@@ -156,3 +156,27 @@ def fetch_enrichment_inputs(
         )
     ).fetchall()
     return [(int(r[0]), str(r[1]), r[2], r[3]) for r in rows]
+
+
+def delete_cache(conn: Connection, ingredient_canonical: str) -> None:
+    conn.execute(
+        text(
+            "DELETE FROM meal_planning.ingredient_nutrition_cache "
+            "WHERE ingredient_canonical = :c"
+        ),
+        {"c": ingredient_canonical},
+    )
+
+
+def fetch_sample_raw_text(conn: Connection) -> dict[str, str]:
+    rows = conn.execute(
+        text(
+            """
+            SELECT DISTINCT ON (ingredient_canonical) ingredient_canonical, raw_text
+            FROM meal_planning.recipe_ingredient
+            WHERE ingredient_canonical IS NOT NULL
+            ORDER BY ingredient_canonical, raw_text
+            """
+        )
+    ).fetchall()
+    return {str(r[0]): str(r[1]) for r in rows}
