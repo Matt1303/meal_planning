@@ -246,6 +246,136 @@ def recipe_frequency_chart(view: PlanView) -> go.Figure:
     return fig
 
 
+def _daily_dozen_rollup(
+    view: PlanView,
+) -> dict[str, tuple[int, int, int, float, float]]:
+    """Returns {group: (days_hit, daily_target, total_days, mean_pct, total_portions)}.
+
+    days_hit = number of days where daily_portions >= daily_target (the Daily
+    Dozen is a per-day prescription, so we count days that fully met target).
+    mean_pct = average (daily_portions / daily_target) across all days, capped
+    at 1.0 per day so an over-stuffed day doesn't compensate for missed ones.
+    """
+    days_n = max(len(view.days), 1)
+    out: dict[str, tuple[int, int, int, float, float]] = {}
+    for day in view.days:
+        if not day.per_profile:
+            continue
+        entry = day.per_profile[0]
+        for group, triple in entry.daily_dozen.items():
+            _count, target, portions = triple
+            hit = 1 if (target > 0 and portions >= target) else 0
+            day_pct = min(portions / target, 1.0) if target > 0 else 0.0
+            prev = out.get(group, (0, target, days_n, 0.0, 0.0))
+            out[group] = (
+                prev[0] + hit,
+                target,
+                days_n,
+                prev[3] + day_pct,
+                prev[4] + portions,
+            )
+    return {
+        group: (days_hit, target, days_n, mean_pct_sum / days_n, total_portions)
+        for group, (days_hit, target, days_n, mean_pct_sum, total_portions) in out.items()
+    }
+
+
+def dozen_summary_counts(view: PlanView) -> tuple[int, int, int, list[str]]:
+    """Returns (met, partial, missed, gap_group_names).
+
+    met = every day in the plan hit the daily target
+    partial = at least one day hit the target, but not every day
+    missed = no day hit the target
+    """
+    rollup = _daily_dozen_rollup(view)
+    met = 0
+    partial = 0
+    missed = 0
+    gaps: list[str] = []
+    for group, (days_hit, _target, days_n, _mean_pct, total_portions) in rollup.items():
+        if days_hit >= days_n > 0:
+            met += 1
+        elif days_hit > 0 or total_portions > 0:
+            partial += 1
+        else:
+            missed += 1
+            gaps.append(group)
+    return met, partial, missed, sorted(gaps)
+
+
+def daily_dozen_weekly_chart(view: PlanView) -> go.Figure:
+    rollup = _daily_dozen_rollup(view)
+    if not rollup:
+        fig = go.Figure()
+        fig.update_layout(annotations=[{"text": "No daily-dozen data.", "showarrow": False}])
+        return fig
+
+    # Sort worst first so user sees gaps at the top.
+    items = sorted(rollup.items(), key=lambda kv: kv[1][0] / max(kv[1][2], 1))
+    groups = [g for g, _ in items]
+    days_hit = [v[0] for _, v in items]
+    daily_targets = [v[1] for _, v in items]
+    total_days = [v[2] for _, v in items]
+    mean_pcts = [v[3] for _, v in items]
+    total_portions = [v[4] for _, v in items]
+
+    def _bar_colour(hit: int, total: int, mean_pct: float) -> str:
+        if total <= 0:
+            return "#bdc3c7"
+        if hit >= total:
+            return "#27ae60"  # met every day
+        if mean_pct >= 0.5:
+            return "#f39c12"  # partial — averaging >=50%
+        if mean_pct > 0:
+            return "#e67e22"  # low
+        return "#c0392b"  # zero — full gap
+
+    colours = [
+        _bar_colour(h, t, m) for h, t, m in zip(days_hit, total_days, mean_pcts, strict=False)
+    ]
+    hover = [
+        (
+            f"{g}<br>"
+            f"Daily target: {dt} portion(s)/day<br>"
+            f"Days fully met: {h}/{t}<br>"
+            f"Avg daily achievement: {m * 100:.0f}%<br>"
+            f"Total portions this plan: {p:.1f}"
+        )
+        for g, h, dt, t, m, p in zip(
+            groups, days_hit, daily_targets, total_days, mean_pcts, total_portions, strict=False
+        )
+    ]
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            y=groups,
+            x=days_hit,
+            orientation="h",
+            marker_color=colours,
+            customdata=hover,
+            hovertemplate="%{customdata}<extra></extra>",
+            name="Days fully met",
+        )
+    )
+    # Reference line: full alignment = every day hit.
+    fig.add_vline(
+        x=max(total_days) if total_days else 0,
+        line_dash="dash",
+        line_color="#444",
+        annotation_text=f"target: every day ({total_days[0] if total_days else 0})",
+        annotation_position="top",
+    )
+    fig.update_layout(
+        height=max(360, 32 * len(groups)),
+        margin={"t": 30, "b": 40, "l": 200, "r": 30},
+        xaxis_title="Days fully meeting the daily target",
+        xaxis={"range": [0, (max(total_days) + 1) if total_days else 1]},
+        showlegend=False,
+    )
+    return fig
+
+
 def daily_dozen_heatmap(view: PlanView) -> go.Figure:
     groups: list[str] = []
     days = [d.day for d in view.days]
@@ -289,10 +419,21 @@ def daily_dozen_heatmap(view: PlanView) -> go.Figure:
             y=groups,
             z=z,
             customdata=custom,
-            colorscale="YlGn",
+            colorscale=[
+                (0.0, "#c0392b"),
+                (0.49, "#e67e22"),
+                (0.5, "#f1c40f"),
+                (0.99, "#f1c40f"),
+                (1.0, "#27ae60"),
+                (1.5, "#27ae60"),
+            ],
             zmin=0,
             zmax=1.5,
-            colorbar={"title": "count ÷ target"},
+            colorbar={
+                "title": "count ÷ daily target",
+                "tickvals": [0, 0.5, 1.0, 1.5],
+                "ticktext": ["0 (gap)", "½", "target", "1.5×"],
+            },
             hovertemplate="%{y} · day %{x}<br>%{customdata}<extra></extra>",
         )
     )

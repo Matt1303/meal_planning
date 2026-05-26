@@ -13,8 +13,10 @@ from meal_planner.logging import configure as configure_logging
 from meal_planner.optimize import optimize_plan, write_plan
 from meal_planner.ui.charts import (
     daily_dozen_heatmap,
+    daily_dozen_weekly_chart,
     daily_macros_chart,
     day_meal_stack_chart,
+    dozen_summary_counts,
     recipe_frequency_chart,
 )
 from meal_planner.ui.data import (
@@ -219,6 +221,22 @@ def _render_plan(view: PlanView, meal_types: list[str]) -> None:
 
 
 def _render_dashboard(view: PlanView, settings: Settings) -> None:
+    st.markdown("### Daily Dozen alignment")
+    met, partial, missed, gaps = dozen_summary_counts(view)
+    cols = st.columns(3)
+    cols[0].metric("Groups fully met (every day)", met)
+    cols[1].metric("Partial", partial)
+    cols[2].metric("Gaps (zero portions)", missed)
+    if gaps:
+        st.warning("**Completely missing this plan:** " + ", ".join(gaps))
+    st.caption(
+        "Greger's Daily Dozen is a per-day prescription — bars below show "
+        "how many days each group hit its daily target."
+    )
+    st.plotly_chart(daily_dozen_weekly_chart(view), use_container_width=True)
+    with st.expander("Daily heatmap (per-day detail)", expanded=False):
+        st.plotly_chart(daily_dozen_heatmap(view), use_container_width=True)
+
     st.markdown("### Daily macros vs targets")
     st.plotly_chart(
         daily_macros_chart(view, settings.optimizer, settings.household.profiles),
@@ -228,8 +246,6 @@ def _render_dashboard(view: PlanView, settings: Settings) -> None:
     st.plotly_chart(day_meal_stack_chart(view), use_container_width=True)
     st.markdown("### Recipe frequency by user")
     st.plotly_chart(recipe_frequency_chart(view), use_container_width=True)
-    st.markdown("### Daily Dozen coverage")
-    st.plotly_chart(daily_dozen_heatmap(view), use_container_width=True)
 
 
 def _run_pipeline(settings: Settings) -> int:
