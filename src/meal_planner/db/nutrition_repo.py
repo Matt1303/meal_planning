@@ -152,10 +152,48 @@ def fetch_enrichment_inputs(
             JOIN meal_planning.recipe r ON r.recipe_id = ri.recipe_id
             WHERE ri.ingredient_canonical IS NOT NULL
               AND ri.per_serving_grams IS NOT NULL
+              AND ri.sub_recipe_id IS NULL
             """
         )
     ).fetchall()
     return [(int(r[0]), str(r[1]), r[2], r[3]) for r in rows]
+
+
+def fetch_sub_recipe_lines(
+    conn: Connection,
+) -> list[tuple[int, int, Decimal | None]]:
+    """Rows where the ingredient line points at another recipe.
+
+    Returns (parent_recipe_id, sub_recipe_id, per_serving_grams_of_parent_line).
+    """
+    rows = conn.execute(
+        text(
+            """
+            SELECT recipe_id, sub_recipe_id, per_serving_grams
+            FROM meal_planning.recipe_ingredient
+            WHERE sub_recipe_id IS NOT NULL
+            """
+        )
+    ).fetchall()
+    return [(int(r[0]), int(r[1]), r[2]) for r in rows]
+
+
+def fetch_recipe_serving_grams(conn: Connection) -> dict[int, Decimal]:
+    """Total per-serving grams of each recipe (sum of its non-sub ingredient
+    per_serving_grams). Used to convert a sub-recipe's per-serving macros into
+    a per-gram rate."""
+    rows = conn.execute(
+        text(
+            """
+            SELECT recipe_id, COALESCE(SUM(per_serving_grams), 0)
+            FROM meal_planning.recipe_ingredient
+            WHERE per_serving_grams IS NOT NULL
+              AND sub_recipe_id IS NULL
+            GROUP BY recipe_id
+            """
+        )
+    ).fetchall()
+    return {int(r[0]): Decimal(str(r[1])) for r in rows if r[1] is not None}
 
 
 def delete_cache(conn: Connection, ingredient_canonical: str) -> None:

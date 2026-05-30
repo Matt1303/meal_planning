@@ -71,6 +71,8 @@ class IngredientLine:
     match_source_name: str | None
     match_score: float | None
     source: str | None
+    sub_recipe_id: int | None = None
+    sub_recipe_title: str | None = None
 
 
 @dataclass(frozen=True)
@@ -152,6 +154,47 @@ def _load_recipe_ratings(engine: Engine, recipe_ids: list[int]) -> dict[int, flo
     return {int(r[0]): float(r[1]) for r in rows}
 
 
+def _load_recipe_per_gram_macros(
+    engine: Engine,
+) -> dict[int, tuple[float, float, float, float, float]]:
+    """For every recipe, derive per-gram macros from its non-sub ingredients
+    so a parent line that points at this recipe can be scaled. Returns
+    (kcal, protein, fiber, fat, carbs) all per-gram, keyed by recipe_id."""
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT ri.recipe_id,
+                       SUM(ri.per_serving_grams) AS total_grams,
+                       SUM(ri.per_serving_grams * c.kcal_per_100g) / 100.0 AS kcal,
+                       SUM(ri.per_serving_grams * c.protein_g_per_100g) / 100.0 AS protein,
+                       SUM(ri.per_serving_grams * c.fiber_g_per_100g) / 100.0 AS fiber,
+                       SUM(ri.per_serving_grams * c.fat_g_per_100g) / 100.0 AS fat,
+                       SUM(ri.per_serving_grams * c.carbs_g_per_100g) / 100.0 AS carbs
+                FROM meal_planning.recipe_ingredient ri
+                JOIN meal_planning.ingredient_nutrition_cache c
+                  ON c.ingredient_canonical = ri.ingredient_canonical
+                WHERE ri.per_serving_grams IS NOT NULL
+                  AND ri.sub_recipe_id IS NULL
+                GROUP BY ri.recipe_id
+                """
+            )
+        ).fetchall()
+    out: dict[int, tuple[float, float, float, float, float]] = {}
+    for row in rows:
+        total = _f(row[1])
+        if total <= 0:
+            continue
+        out[int(row[0])] = (
+            _f(row[2]) / total,
+            _f(row[3]) / total,
+            _f(row[4]) / total,
+            _f(row[5]) / total,
+            _f(row[6]) / total,
+        )
+    return out
+
+
 def _load_ingredient_breakdown(
     engine: Engine, recipe_ids: list[int]
 ) -> dict[int, list[IngredientLine]]:
@@ -165,10 +208,13 @@ def _load_ingredient_breakdown(
                        ri.per_serving_grams,
                        c.kcal_per_100g, c.protein_g_per_100g, c.fiber_g_per_100g,
                        c.fat_g_per_100g, c.carbs_g_per_100g,
-                       c.match_source_name, c.match_score, c.source
+                       c.match_source_name, c.match_score, c.source,
+                       ri.sub_recipe_id, sub.title
                 FROM meal_planning.recipe_ingredient ri
                 LEFT JOIN meal_planning.ingredient_nutrition_cache c
                        ON c.ingredient_canonical = ri.ingredient_canonical
+                LEFT JOIN meal_planning.recipe sub
+                       ON sub.recipe_id = ri.sub_recipe_id
                 WHERE ri.recipe_id = ANY(:ids)
                 ORDER BY ri.recipe_id, ri.raw_text
                 """
@@ -176,29 +222,52 @@ def _load_ingredient_breakdown(
             {"ids": recipe_ids},
         ).fetchall()
 
+    sub_per_gram = _load_recipe_per_gram_macros(engine)
     result: dict[int, list[IngredientLine]] = {}
     for row in rows:
         recipe_id = int(row[0])
         grams = float(row[3]) if row[3] is not None else None
-        kcal_per_100g = _f(row[4])
-        protein_per_100g = _f(row[5])
-        fiber_per_100g = _f(row[6])
-        fat_per_100g = _f(row[7])
-        carbs_per_100g = _f(row[8])
-        factor = (grams / 100.0) if grams is not None else 0.0
-        line = IngredientLine(
-            raw_text=str(row[1]),
-            ingredient_canonical=str(row[2]) if row[2] is not None else None,
-            per_serving_grams=grams,
-            kcal=kcal_per_100g * factor,
-            protein_g=protein_per_100g * factor,
-            fiber_g=fiber_per_100g * factor,
-            fat_g=fat_per_100g * factor,
-            carbs_g=carbs_per_100g * factor,
-            match_source_name=str(row[9]) if row[9] is not None else None,
-            match_score=float(row[10]) if row[10] is not None else None,
-            source=str(row[11]) if row[11] is not None else None,
-        )
+        sub_recipe_id = int(row[12]) if row[12] is not None else None
+        sub_recipe_title = str(row[13]) if row[13] is not None else None
+        if sub_recipe_id is not None and grams is not None and sub_recipe_id in sub_per_gram:
+            kcal_pg, protein_pg, fiber_pg, fat_pg, carbs_pg = sub_per_gram[sub_recipe_id]
+            line = IngredientLine(
+                raw_text=str(row[1]),
+                ingredient_canonical=None,
+                per_serving_grams=grams,
+                kcal=kcal_pg * grams,
+                protein_g=protein_pg * grams,
+                fiber_g=fiber_pg * grams,
+                fat_g=fat_pg * grams,
+                carbs_g=carbs_pg * grams,
+                match_source_name=f"recipe: {sub_recipe_title}",
+                match_score=100.0,
+                source="sub_recipe",
+                sub_recipe_id=sub_recipe_id,
+                sub_recipe_title=sub_recipe_title,
+            )
+        else:
+            kcal_per_100g = _f(row[4])
+            protein_per_100g = _f(row[5])
+            fiber_per_100g = _f(row[6])
+            fat_per_100g = _f(row[7])
+            carbs_per_100g = _f(row[8])
+            factor = (grams / 100.0) if grams is not None else 0.0
+            line = IngredientLine(
+                raw_text=str(row[1]),
+                ingredient_canonical=str(row[2]) if row[2] is not None else None,
+                per_serving_grams=grams,
+                kcal=kcal_per_100g * factor,
+                protein_g=protein_per_100g * factor,
+                fiber_g=fiber_per_100g * factor,
+                fat_g=fat_per_100g * factor,
+                carbs_g=carbs_per_100g * factor,
+                match_source_name=str(row[9]) if row[9] is not None else None,
+                match_score=float(row[10]) if row[10] is not None else None,
+                source=str(row[11]) if row[11] is not None else None,
+                sub_recipe_id=sub_recipe_id,
+                sub_recipe_title=sub_recipe_title,
+            )
         result.setdefault(recipe_id, []).append(line)
     return result
 

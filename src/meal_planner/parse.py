@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from rapidfuzz import process
-from sqlalchemy import Engine
+from sqlalchemy import Connection, Engine, text
 
 from meal_planner.config import Settings
 from meal_planner.correlation import current_correlation_id
@@ -287,6 +287,38 @@ def _resolve_food_paths(settings: Settings) -> list[Path]:
     return paths
 
 
+SUB_RECIPE_MARKER = re.compile(
+    r"\(\s*(?:separate\s+recipe|see\s+recipe|recipe\s+(?:above|below))(?:\s*[,;].*?)?\s*\)",
+    re.IGNORECASE,
+)
+SUB_RECIPE_FUZZY_MIN_SCORE = 90.0
+
+
+def detect_sub_recipe_name(raw_text: str) -> str | None:
+    """Return the recipe-title candidate when the raw line carries a
+    (separate recipe) / (see recipe) / (recipe above/below) marker.
+
+    Strips the marker, any trailing "or X" alternative clause, leading
+    quantity, and trailing modifiers like ", to serve" so what is left is
+    just the recipe name to fuzzy-match.
+    """
+    match = SUB_RECIPE_MARKER.search(raw_text)
+    if match is None:
+        return None
+    before = raw_text[: match.start()]
+    after = raw_text[match.end() :]
+    # Drop a trailing "or X" clause that often follows the marker (e.g.
+    # "60 grams Pumpkin Hummus (separate recipe) or other hummus").
+    after = re.sub(r"^\s*or\s+[^,.]+", "", after, flags=re.IGNORECASE)
+    candidate = (before + " " + after).strip()
+    # Strip trailing modifiers like ", to serve" / ", chopped" — they
+    # describe how the sub-recipe is used, not part of its title.
+    candidate = re.split(r",\s*(?:to\s+\w+|for\s+\w+|chopped|sliced|diced|crushed)", candidate)[0]
+    candidate = strip_quantity(candidate) or candidate
+    candidate = candidate.strip(" ,.-")
+    return candidate or None
+
+
 def _quantulum_then_regex(raw: str, errors: list[int]) -> tuple[Decimal | None, str | None]:
     qty_value, qty_unit, ok = quantulum_parse(raw)
     if not ok:
@@ -337,6 +369,73 @@ def _portions(
     if size <= 0:
         return None, None
     return grams / size, grams >= size
+
+
+def resolve_sub_recipes(conn: Connection) -> int:
+    """Detect (separate recipe) markers in recipe_ingredient.raw_text and
+    populate sub_recipe_id by fuzzy-matching the title prefix against
+    meal_planning.recipe.title. Returns the number of rows resolved.
+    """
+    candidate_rows = conn.execute(
+        text(
+            """
+            SELECT recipe_id, raw_text
+            FROM meal_planning.recipe_ingredient
+            WHERE (raw_text ILIKE '%(separate recipe%'
+                OR raw_text ILIKE '%(see recipe%'
+                OR raw_text ILIKE '%(recipe above%'
+                OR raw_text ILIKE '%(recipe below%')
+              AND sub_recipe_id IS NULL
+            """
+        )
+    ).fetchall()
+    if not candidate_rows:
+        return 0
+
+    title_rows = conn.execute(
+        text("SELECT recipe_id, title FROM meal_planning.recipe WHERE title IS NOT NULL")
+    ).fetchall()
+    titles = [str(r[1]) for r in title_rows]
+    title_to_id = {str(r[1]).lower(): int(r[0]) for r in title_rows}
+
+    resolved = 0
+    for parent_recipe_id, raw_text in candidate_rows:
+        name = detect_sub_recipe_name(str(raw_text))
+        if not name:
+            continue
+        # Exact lower-cased match wins outright; also accept substring match
+        # (e.g. "Light Vegetable Broth" referenced from "Biome Broth Unleashed
+        # / Light Vegetable Broth" recipe title).
+        sub_id = title_to_id.get(name.lower())
+        if sub_id is None:
+            match = process.extractOne(name, titles, score_cutoff=SUB_RECIPE_FUZZY_MIN_SCORE)
+            if match is None:
+                continue
+            matched_title = str(match[0])
+            # Require the candidate's first significant token to appear in the
+            # matched title; otherwise stale/wrong fuzzy hits sneak through
+            # ("Almond Milk" -> "...Coconut Milk").
+            head_tokens = [t for t in name.lower().split() if len(t) > 2]
+            head_token = head_tokens[0] if head_tokens else ""
+            if head_token and head_token not in matched_title.lower():
+                continue
+            sub_id = title_to_id.get(matched_title.lower())
+            if sub_id is None:
+                continue
+        if int(sub_id) == int(parent_recipe_id):
+            continue  # don't link a recipe to itself
+        conn.execute(
+            text(
+                """
+                UPDATE meal_planning.recipe_ingredient
+                SET sub_recipe_id = :sub
+                WHERE recipe_id = :parent AND raw_text = :raw
+                """
+            ),
+            {"sub": int(sub_id), "parent": int(parent_recipe_id), "raw": str(raw_text)},
+        )
+        resolved += 1
+    return resolved
 
 
 def parse_ingredients(settings: Settings, *, engine: Engine | None = None) -> int:
@@ -395,6 +494,9 @@ def parse_ingredients(settings: Settings, *, engine: Engine | None = None) -> in
 
         for update, _ in pending:
             write_parse_update(conn, update)
+
+        resolved_subs = resolve_sub_recipes(conn)
+        log.info("parse.sub_recipes_resolved", resolved=resolved_subs)
 
         record_metric(conn, MetricName.PARSE_TOTAL, total, correlation_id=correlation_id)
         record_metric(conn, MetricName.PARSE_CACHED, cached_count, correlation_id=correlation_id)

@@ -20,7 +20,9 @@ from meal_planner.db.nutrition_repo import (
     delete_cache,
     fetch_cache,
     fetch_enrichment_inputs,
+    fetch_recipe_serving_grams,
     fetch_sample_raw_text,
+    fetch_sub_recipe_lines,
     upsert_cache,
     upsert_recipe_nutrition,
 )
@@ -941,6 +943,34 @@ def enrich_nutrition(
                 agg["fat"] += result.fat_g_per_100g * scale
             if result.carbs_g_per_100g is not None:
                 agg["carbs"] += result.carbs_g_per_100g * scale
+
+        # Expand "(separate recipe)" rows: add the sub-recipe's per-gram
+        # contribution scaled by the parent line's per_serving_grams.
+        sub_rows = fetch_sub_recipe_lines(conn)
+        sub_recipe_grams = fetch_recipe_serving_grams(conn)
+        sub_expanded = 0
+        for parent_id, sub_id, parent_grams in sub_rows:
+            if parent_grams is None:
+                continue
+            sub_total_grams = sub_recipe_grams.get(sub_id)
+            sub_agg = recipes.get(sub_id)
+            if not sub_total_grams or not sub_agg or sub_total_grams <= 0:
+                continue
+            scale = Decimal(parent_grams) / sub_total_grams
+            parent_agg = recipes.setdefault(
+                parent_id,
+                {
+                    "kcal": Decimal(0),
+                    "fiber": Decimal(0),
+                    "protein": Decimal(0),
+                    "fat": Decimal(0),
+                    "carbs": Decimal(0),
+                },
+            )
+            for key in ("kcal", "fiber", "protein", "fat", "carbs"):
+                parent_agg[key] += sub_agg[key] * scale
+            sub_expanded += 1
+        log.info("nutrition.sub_recipes_expanded", expanded=sub_expanded)
 
         for recipe_id, agg in recipes.items():
             servings = servings_map.get(recipe_id, Decimal(1)) or Decimal(1)

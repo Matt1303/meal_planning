@@ -20,6 +20,7 @@ class ParseUpdate:
     food_group: str | None
     portions: Decimal | None
     portion_met: bool | None
+    sub_recipe_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -101,7 +102,8 @@ def write_parse_update(conn: Connection, update: ParseUpdate) -> None:
                 per_serving_grams = :per_serving_grams,
                 food_group = :food_group,
                 portions = :portions,
-                portion_met = :portion_met
+                portion_met = :portion_met,
+                sub_recipe_id = :sub_recipe_id
             WHERE recipe_id = :recipe_id AND raw_text = :raw_text
             """
         ),
@@ -117,6 +119,7 @@ def write_parse_update(conn: Connection, update: ParseUpdate) -> None:
             "food_group": update.food_group,
             "portions": update.portions,
             "portion_met": update.portion_met,
+            "sub_recipe_id": update.sub_recipe_id,
         },
     )
 

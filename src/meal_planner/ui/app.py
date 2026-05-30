@@ -72,17 +72,24 @@ def _render_ingredient_table(ingredients: list[IngredientLine], meal_kcal: float
     for ing in ingredients:
         grams_disp = f"{ing.per_serving_grams:.0f}" if ing.per_serving_grams is not None else "—"
         match_text = ing.match_source_name or "—"
-        if ing.match_score is not None and ing.match_source_name is not None:
+        if (
+            ing.match_score is not None
+            and ing.match_source_name is not None
+            and (ing.source != "sub_recipe")
+        ):
             match_text += f" ({ing.match_score:.0f})"
         if ing.source:
             match_text += f" · {ing.source}"
         warn = []
         if ing.per_serving_grams is None:
             warn.append("no grams")
-        if ing.match_score is not None and ing.match_score < LOW_CONFIDENCE_MATCH:
-            warn.append("low-confidence match")
-        if ing.match_source_name is None and ing.ingredient_canonical is not None:
-            warn.append("no nutrition match")
+        if ing.source != "sub_recipe":
+            if ing.match_score is not None and ing.match_score < LOW_CONFIDENCE_MATCH:
+                warn.append("low-confidence match")
+            if ing.match_source_name is None and ing.ingredient_canonical is not None:
+                warn.append("no nutrition match")
+        if ing.sub_recipe_id is not None and ing.source != "sub_recipe":
+            warn.append("sub-recipe not yet expanded")
         if warn:
             flagged.append(f"`{ing.raw_text}` — {', '.join(warn)}")
         rows.append(
