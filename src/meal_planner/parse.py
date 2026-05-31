@@ -316,6 +316,16 @@ def detect_sub_recipe_name(raw_text: str) -> str | None:
     candidate = re.split(r",\s*(?:to\s+\w+|for\s+\w+|chopped|sliced|diced|crushed)", candidate)[0]
     candidate = strip_quantity(candidate) or candidate
     candidate = candidate.strip(" ,.-")
+    # Strip wrapper prefixes that describe how the sub-recipe is being used
+    # rather than its title ("Leftover X", "reserved X", "1 recipe X").
+    candidate = re.sub(
+        r"^(?:leftover|reserved|remaining|left[\s-]*over|"
+        r"\d+\s*(?:recipe|portion|portions|serving|servings)|"
+        r"recipes?(?:\s+of)?|portion(?:s)?\s+of|serving(?:s)?\s+of)\s+",
+        "",
+        candidate,
+        flags=re.IGNORECASE,
+    ).strip()
     return candidate or None
 
 

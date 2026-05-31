@@ -16,7 +16,7 @@ from meal_planner.parse import detect_sub_recipe_name
         ("Creamy Coriander Sauce (separate recipe), to serve", "Creamy Coriander Sauce"),
         ("Jicama Fries (separate recipe), for serving", "Jicama Fries"),
         ("250 ml Almond Milk (separate recipe)", "Almond Milk"),
-        ("120 grams reserved 4-Bean Chilli (separate recipe)", "reserved 4-Bean Chilli"),
+        ("120 grams reserved 4-Bean Chilli (separate recipe)", "4-Bean Chilli"),
         ("Pumpkin Seed Parmesan (separate recipe), to serve", "Pumpkin Seed Parmesan"),
         ("2 roasted red peppers (separate recipe,or shop-bought), chopped", "roasted red peppers"),
     ],
@@ -37,6 +37,16 @@ def test_detect_sub_recipe_name_returns_none_for_normal_ingredient() -> None:
 @pytest.mark.unit
 def test_detect_sub_recipe_name_handles_see_recipe_variant() -> None:
     assert detect_sub_recipe_name("60 grams Tahini Dressing (see recipe)") == "Tahini Dressing"
+
+
+@pytest.mark.unit
+def test_detect_sub_recipe_name_strips_wrapper_prefixes() -> None:
+    assert detect_sub_recipe_name("Leftover Muhammara Dip (separate recipe)") == "Muhammara Dip"
+    assert (
+        detect_sub_recipe_name("1 recipe Crispy Baked Tofu (separate recipe)")
+        == "Crispy Baked Tofu"
+    )
+    assert detect_sub_recipe_name("Reserved 4-Bean Chilli (separate recipe)") == "4-Bean Chilli"
 
 
 @pytest.mark.unit
