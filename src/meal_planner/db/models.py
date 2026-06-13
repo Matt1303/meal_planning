@@ -37,6 +37,11 @@ class Recipe(Base):
     source: Mapped[str | None] = mapped_column(Text)
     last_modified: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     is_plant_based: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    declared_kcal: Mapped[Decimal | None] = mapped_column(Numeric)
+    declared_protein_g: Mapped[Decimal | None] = mapped_column(Numeric)
+    declared_fiber_g: Mapped[Decimal | None] = mapped_column(Numeric)
+    declared_fat_g: Mapped[Decimal | None] = mapped_column(Numeric)
+    declared_carbs_g: Mapped[Decimal | None] = mapped_column(Numeric)
 
 
 class RecipeSource(Base):

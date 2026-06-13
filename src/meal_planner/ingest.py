@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -84,6 +85,7 @@ def ingest_local_html(settings: Settings, *, engine: Engine | None = None) -> In
             servings_count = parse_servings_count(servings)
             last_modified = datetime.fromtimestamp(fpath.stat().st_mtime, tz=UTC)
             ingredient_lines = _ingredient_lines(soup, selectors.ingredient_lines)
+            declared = _parse_declared_nutrition(soup, selectors.nutrition)
 
             haystack = " ".join([title or "", *ingredient_lines])
             is_plant = classifier.is_plant(haystack)
@@ -106,6 +108,11 @@ def ingest_local_html(settings: Settings, *, engine: Engine | None = None) -> In
                 source=relative_source,
                 last_modified=last_modified,
                 is_plant_based=is_plant,
+                declared_kcal=declared.kcal,
+                declared_protein_g=declared.protein_g,
+                declared_fiber_g=declared.fiber_g,
+                declared_fat_g=declared.fat_g,
+                declared_carbs_g=declared.carbs_g,
             )
             upsert_recipe_source(
                 conn,
@@ -163,6 +170,59 @@ def _text(soup: BeautifulSoup, selector: str) -> str:
     if isinstance(el, Tag):
         return str(el.get_text(strip=True))
     return ""
+
+
+@dataclass(frozen=True)
+class DeclaredNutrition:
+    kcal: Decimal | None = None
+    protein_g: Decimal | None = None
+    fiber_g: Decimal | None = None
+    fat_g: Decimal | None = None
+    carbs_g: Decimal | None = None
+
+    @property
+    def has_any(self) -> bool:
+        return any(
+            v is not None
+            for v in (self.kcal, self.protein_g, self.fiber_g, self.fat_g, self.carbs_g)
+        )
+
+
+_NUTR_PATTERNS: dict[str, re.Pattern[str]] = {
+    "kcal": re.compile(r"(\d+(?:\.\d+)?)\s*(?:kcal|calories|cals?)\b", re.IGNORECASE),
+    "protein_g": re.compile(r"(\d+(?:\.\d+)?)\s*g\s*protein", re.IGNORECASE),
+    "fiber_g": re.compile(r"(\d+(?:\.\d+)?)\s*g\s*(?:fibre|fiber)", re.IGNORECASE),
+    "fat_g": re.compile(r"(\d+(?:\.\d+)?)\s*g\s*(?:total\s*)?fat", re.IGNORECASE),
+    "carbs_g": re.compile(r"(\d+(?:\.\d+)?)\s*g\s*carb", re.IGNORECASE),
+}
+
+
+def _parse_declared_nutrition(soup: BeautifulSoup, selector: str) -> DeclaredNutrition:
+    """Parse Paprika's free-text Nutrition section, e.g.
+    "592 calories  67g carbohydrate  12g fat  48g protein  13g fibre"."""
+    if not selector:
+        return DeclaredNutrition()
+    el = soup.select_one(selector)
+    if not isinstance(el, Tag):
+        return DeclaredNutrition()
+    text_value = el.get_text(separator=" ", strip=True)
+    if not text_value:
+        return DeclaredNutrition()
+    values: dict[str, Decimal | None] = {}
+    for field_name, pattern in _NUTR_PATTERNS.items():
+        match = pattern.search(text_value)
+        if match:
+            try:
+                values[field_name] = Decimal(match.group(1))
+            except (ArithmeticError, ValueError):
+                values[field_name] = None
+    return DeclaredNutrition(
+        kcal=values.get("kcal"),
+        protein_g=values.get("protein_g"),
+        fiber_g=values.get("fiber_g"),
+        fat_g=values.get("fat_g"),
+        carbs_g=values.get("carbs_g"),
+    )
 
 
 def _attr(soup: BeautifulSoup, selector: str, attr: str) -> str:

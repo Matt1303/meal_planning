@@ -16,6 +16,7 @@ class SourceSelectors(BaseModel):
     rating: str
     servings: str
     difficulty: str
+    nutrition: str = "div.nutrition.text"
 
 
 class LocalHtmlSource(BaseModel):
@@ -148,6 +149,9 @@ class ProfileTargets(BaseModel):
     fiber_daily_min: int | None = None
     protein_daily_min: int | None = None
     protein_daily_max: int | None = None
+    # meal_type -> recipe title to pin on that slot every day for this profile
+    # (e.g. {"breakfast": "Matt Breakfast Smoothie"}).
+    fixed_meals: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _validate_ranges(self) -> ProfileTargets:

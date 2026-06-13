@@ -186,7 +186,19 @@ were softened, and the **slack total** quantifies by how much. A high slack/
 relaxation is a signal you need more recipes of a certain type (more high-fibre
 meals, more berries, etc.).
 
-### 3.5 Shortfall handling (snacks)
+### 3.5 Fixed meals (e.g. the same breakfast every day)
+
+You can **pin a recipe to one person's breakfast every day** — useful when
+someone always has the same thing each morning. In the sidebar, each user has a
+**"fixed breakfast"** dropdown; pick a recipe and that person gets it every day,
+while the optimiser plans their lunch/dinner/snack *around* it (it still counts
+the fixed meal's calories and macros toward the day's targets). The other person
+is unaffected and their breakfast is chosen freely. A pinned recipe is exempt
+from the repeat cap and spacing penalty (it's meant to repeat). Combine this
+with a Paprika Nutrition section (§4) so the fixed meal's macros come straight
+from the recipe.
+
+### 3.6 Shortfall handling (snacks)
 
 When the solver can't reach a person's calorie/protein/fibre minimum from the
 recipes alone, the dashboard surfaces the remaining gap on that day's **snack**
@@ -229,6 +241,17 @@ show as `recipe: <Sub Recipe Title>`.
 > Note: a few companion recipes referenced this way aren't in your Paprika
 > library (e.g. "Light Vegetable Broth"), so they can't be expanded — add them
 > to Paprika to close those gaps.
+
+### Paprika Nutrition section (declared nutrition)
+
+If a recipe has a **Nutrition** section filled in inside Paprika (e.g.
+"592 calories, 67g carbohydrate, 12g fat, 48g protein, 13g fibre"), the planner
+uses those **declared per-serving values verbatim** and does *not* try to
+compute the recipe from its ingredients. This is ideal for things like a fixed
+breakfast smoothie that's always made the same way — you control the numbers
+directly in Paprika. Any macro you leave blank in Paprika falls back to the
+ingredient-computed value, so you can fill in just calories + protein and let
+the rest be estimated.
 
 ### Coverage
 

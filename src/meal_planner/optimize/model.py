@@ -166,7 +166,23 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
 
         model.user_allowed = Constraint(model.P, model.R, model.D, model.USER_M, rule=user_allowed)
 
+        # Pin per-profile fixed meals (e.g. Matt's breakfast smoothie every day).
+        fixed_keys = [
+            (p, meal, d) for (p, meal) in prepared.fixed_assignments for d in prepared.days
+        ]
+        if fixed_keys:
+            model.FIXED = Set(initialize=fixed_keys, dimen=3)
+
+            def fixed_rule(m: Any, p: str, meal: str, d: int) -> Any:
+                r = prepared.fixed_assignments[(p, meal)]
+                return m.x_user[p, r, d, meal] == 1
+
+            model.fixed_meal = Constraint(model.FIXED, rule=fixed_rule)
+
     def repeat_rule(m: Any, r: int) -> Any:
+        # Fixed meals are pinned every day by design — exempt from the repeat cap.
+        if r in prepared.fixed_recipe_ids:
+            return Constraint.Skip
         return sum(_meal_appearances(m, r, d, prepared) for d in m.D) <= opt.max_recipe_repeats
 
     model.repeat_limit = Constraint(model.R, rule=repeat_rule)
@@ -424,6 +440,7 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
             spacing_term = sum(
                 penalty_by_gap.get(d2 - d1, 0.0) * m.recipe_pair[r, d1, d2]
                 for r in m.R
+                if r not in prepared.fixed_recipe_ids
                 for d1, d2 in relevant_pairs
             )
         return (

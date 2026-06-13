@@ -18,15 +18,24 @@ def upsert_recipe(
     source: str | None,
     last_modified: datetime | None,
     is_plant_based: bool,
+    declared_kcal: Decimal | None = None,
+    declared_protein_g: Decimal | None = None,
+    declared_fiber_g: Decimal | None = None,
+    declared_fat_g: Decimal | None = None,
+    declared_carbs_g: Decimal | None = None,
 ) -> int:
     row = conn.execute(
         text(
             """
             INSERT INTO meal_planning.recipe
                 (title, rating, servings, servings_count, difficulty, categories,
-                 source, last_modified, is_plant_based)
+                 source, last_modified, is_plant_based,
+                 declared_kcal, declared_protein_g, declared_fiber_g,
+                 declared_fat_g, declared_carbs_g)
             VALUES (:title, :rating, :servings, :servings_count, :difficulty, :categories,
-                    :source, :last_modified, :is_plant_based)
+                    :source, :last_modified, :is_plant_based,
+                    :declared_kcal, :declared_protein_g, :declared_fiber_g,
+                    :declared_fat_g, :declared_carbs_g)
             ON CONFLICT (title) DO UPDATE SET
                 rating = EXCLUDED.rating,
                 servings = EXCLUDED.servings,
@@ -35,7 +44,12 @@ def upsert_recipe(
                 categories = EXCLUDED.categories,
                 source = EXCLUDED.source,
                 last_modified = EXCLUDED.last_modified,
-                is_plant_based = EXCLUDED.is_plant_based
+                is_plant_based = EXCLUDED.is_plant_based,
+                declared_kcal = EXCLUDED.declared_kcal,
+                declared_protein_g = EXCLUDED.declared_protein_g,
+                declared_fiber_g = EXCLUDED.declared_fiber_g,
+                declared_fat_g = EXCLUDED.declared_fat_g,
+                declared_carbs_g = EXCLUDED.declared_carbs_g
             RETURNING recipe_id
             """
         ),
@@ -49,6 +63,11 @@ def upsert_recipe(
             "source": source,
             "last_modified": last_modified,
             "is_plant_based": is_plant_based,
+            "declared_kcal": declared_kcal,
+            "declared_protein_g": declared_protein_g,
+            "declared_fiber_g": declared_fiber_g,
+            "declared_fat_g": declared_fat_g,
+            "declared_carbs_g": declared_carbs_g,
         },
     ).scalar_one()
     return int(row)

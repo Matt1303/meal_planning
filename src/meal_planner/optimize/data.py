@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from math import exp
 from typing import cast
@@ -9,6 +9,9 @@ import pandas as pd
 from sqlalchemy import Engine
 
 from meal_planner.config import ProfileTargets, Settings
+from meal_planner.logging import get_logger
+
+log = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -20,6 +23,7 @@ class ProfileSpec:
     fiber_daily_min: int | None
     protein_daily_min: int | None
     protein_daily_max: int | None
+    fixed_meals: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def from_targets(cls, profile: ProfileTargets) -> ProfileSpec:
@@ -31,6 +35,7 @@ class ProfileSpec:
             fiber_daily_min=profile.fiber_daily_min,
             protein_daily_min=profile.protein_daily_min,
             protein_daily_max=profile.protein_daily_max,
+            fixed_meals=dict(profile.fixed_meals),
         )
 
 
@@ -148,6 +153,9 @@ class PreparedData:
     food_group_of: dict[str, str]
     portions: dict[tuple[int, str], float]
     group_portions: dict[tuple[int, str], float]
+    # (profile_name, meal_type) -> recipe_id pinned every day for that profile.
+    fixed_assignments: dict[tuple[str, str], int] = field(default_factory=dict)
+    fixed_recipe_ids: set[int] = field(default_factory=set)
 
 
 def prepare(inputs: ModelInputs, settings: Settings) -> PreparedData:
@@ -244,6 +252,41 @@ def prepare(inputs: ModelInputs, settings: Settings) -> PreparedData:
     profiles = derive_profiles(settings)
     shared_meal_types, per_user_meal_types = split_meal_types(settings)
 
+    # Resolve per-profile fixed meals (recipe title -> recipe_id). The pinned
+    # recipe must be in the filtered recipe set and assigned to a per-user meal
+    # type; we force it allowed for that meal so the pin is feasible.
+    title_to_id = {
+        str(t).strip().lower(): int(rid)
+        for rid, t in zip(
+            inputs.recipes["recipe_id"].tolist(),
+            inputs.recipes["title"].tolist(),
+            strict=False,
+        )
+    }
+    fixed_assignments: dict[tuple[str, str], int] = {}
+    fixed_recipe_ids: set[int] = set()
+    for profile in profiles:
+        for meal_type, title in profile.fixed_meals.items():
+            if meal_type not in per_user_meal_types:
+                log.warning(
+                    "optimize.fixed_meal_not_per_user",
+                    profile=profile.name,
+                    meal_type=meal_type,
+                )
+                continue
+            fixed_rid = title_to_id.get(str(title).strip().lower())
+            if fixed_rid is None:
+                log.warning(
+                    "optimize.fixed_meal_recipe_missing",
+                    profile=profile.name,
+                    meal_type=meal_type,
+                    title=title,
+                )
+                continue
+            fixed_assignments[(profile.name, meal_type)] = fixed_rid
+            fixed_recipe_ids.add(fixed_rid)
+            allowed_meal[(fixed_rid, meal_type)] = 1
+
     return PreparedData(
         recipes=recipes_list,
         days=days,
@@ -263,4 +306,6 @@ def prepare(inputs: ModelInputs, settings: Settings) -> PreparedData:
         food_group_of=food_group_of,
         portions=portions,
         group_portions=group_portions,
+        fixed_assignments=fixed_assignments,
+        fixed_recipe_ids=fixed_recipe_ids,
     )

@@ -265,7 +265,32 @@ def _run_pipeline(settings: Settings) -> int:
     return write_plan(settings, result, engine=engine)
 
 
-def _profile_widgets(label: str, key_prefix: str, name_default: str) -> ProfileTargets:
+NO_FIXED_BREAKFAST = "(optimiser chooses)"
+
+
+@st.cache_data(show_spinner=False)
+def _breakfast_titles() -> list[str]:
+    from sqlalchemy import text
+
+    engine = get_engine()
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT DISTINCT r.title
+                FROM meal_planning.recipe r
+                JOIN meal_planning.recipe_meal_type mt ON mt.recipe_id = r.recipe_id
+                WHERE mt.meal_type = 'breakfast' AND r.is_plant_based = TRUE
+                ORDER BY r.title
+                """
+            )
+        ).fetchall()
+    return [str(row[0]) for row in rows]
+
+
+def _profile_widgets(
+    label: str, key_prefix: str, name_default: str, breakfast_options: list[str]
+) -> ProfileTargets:
     name = st.text_input(f"{label} name", value=name_default, key=f"{key_prefix}_name")
     cal_min, cal_max = st.slider(
         f"{label} calories range (kcal)",
@@ -291,6 +316,16 @@ def _profile_widgets(label: str, key_prefix: str, name_default: str) -> ProfileT
         step=1,
         key=f"{key_prefix}_fibre",
     )
+    fixed_breakfast = st.selectbox(
+        f"{label} fixed breakfast (same every day)",
+        [NO_FIXED_BREAKFAST, *breakfast_options],
+        key=f"{key_prefix}_fixed_breakfast",
+        help="Pin one recipe to this person's breakfast every day; "
+        "the optimiser plans the rest of the day around it.",
+    )
+    fixed_meals: dict[str, str] = {}
+    if fixed_breakfast and fixed_breakfast != NO_FIXED_BREAKFAST:
+        fixed_meals["breakfast"] = fixed_breakfast
     return ProfileTargets(
         name=name,
         display_name=name,
@@ -298,6 +333,7 @@ def _profile_widgets(label: str, key_prefix: str, name_default: str) -> ProfileT
         calories_daily_max=int(cal_max),
         protein_daily_min=int(protein_min),
         fiber_daily_min=int(fiber_min),
+        fixed_meals=fixed_meals,
     )
 
 
@@ -324,18 +360,19 @@ def render() -> None:
         disabled=not use_two,
     )
 
+    breakfast_options = _breakfast_titles()
     if use_two:
         with st.sidebar.expander("User A targets", expanded=True):
-            profile_a = _profile_widgets("User A", "a", "user_a")
+            profile_a = _profile_widgets("User A", "a", "user_a", breakfast_options)
         with st.sidebar.expander("User B targets", expanded=True):
-            profile_b = _profile_widgets("User B", "b", "user_b")
+            profile_b = _profile_widgets("User B", "b", "user_b", breakfast_options)
         profiles = [profile_a, profile_b]
         if profile_a.name == profile_b.name:
             st.sidebar.error("Profile names must be unique")
             return
     else:
         with st.sidebar.expander("User targets", expanded=True):
-            profiles = [_profile_widgets("User", "single", "default")]
+            profiles = [_profile_widgets("User", "single", "default", breakfast_options)]
 
     st.sidebar.header("Variety & ratings")
     spacing_weight = st.sidebar.slider(

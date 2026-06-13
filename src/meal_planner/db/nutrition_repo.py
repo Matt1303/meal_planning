@@ -164,6 +164,39 @@ def fetch_enrichment_inputs(
     return [(int(r[0]), str(r[1]), r[2], r[3]) for r in rows]
 
 
+def fetch_declared_nutrition(
+    conn: Connection,
+) -> dict[
+    int,
+    tuple[
+        Decimal | None,
+        Decimal | None,
+        Decimal | None,
+        Decimal | None,
+        Decimal | None,
+        Decimal | None,
+    ],
+]:
+    """Recipes that carry a Paprika Nutrition section. Returns
+    {recipe_id: (kcal, protein, fiber, fat, carbs, servings_count)} (all
+    per-serving as the recipe states)."""
+    rows = conn.execute(
+        text(
+            """
+            SELECT recipe_id, declared_kcal, declared_protein_g, declared_fiber_g,
+                   declared_fat_g, declared_carbs_g, servings_count
+            FROM meal_planning.recipe
+            WHERE declared_kcal IS NOT NULL
+               OR declared_protein_g IS NOT NULL
+               OR declared_fiber_g IS NOT NULL
+               OR declared_fat_g IS NOT NULL
+               OR declared_carbs_g IS NOT NULL
+            """
+        )
+    ).fetchall()
+    return {int(r[0]): (r[1], r[2], r[3], r[4], r[5], r[6]) for r in rows}
+
+
 def fetch_sub_recipe_lines(
     conn: Connection,
 ) -> list[tuple[int, int, Decimal | None]]:

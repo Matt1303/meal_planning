@@ -19,6 +19,7 @@ from meal_planner.db.nutrition_repo import (
     CachedNutrition,
     delete_cache,
     fetch_cache,
+    fetch_declared_nutrition,
     fetch_enrichment_inputs,
     fetch_recipe_serving_grams,
     fetch_sample_raw_text,
@@ -986,13 +987,42 @@ def enrich_nutrition(
             sub_expanded += 1
         log.info("nutrition.sub_recipes_expanded", expanded=sub_expanded)
 
-        for recipe_id, agg in recipes.items():
+        # Recipes with a Paprika Nutrition section use those declared per-serving
+        # values verbatim, overriding the ingredient-computed aggregation — the
+        # meal is consumed as the recipe states (e.g. a fixed breakfast smoothie).
+        declared = fetch_declared_nutrition(conn)
+        declared_used = 0
+        for recipe_id in set(recipes) | set(declared):
+            agg = recipes.get(
+                recipe_id,
+                {
+                    "kcal": Decimal(0),
+                    "fiber": Decimal(0),
+                    "protein": Decimal(0),
+                    "fat": Decimal(0),
+                    "carbs": Decimal(0),
+                },
+            )
             servings = servings_map.get(recipe_id, Decimal(1)) or Decimal(1)
             per_kcal = agg["kcal"]
             per_fiber = agg["fiber"]
             per_protein = agg["protein"]
             per_fat = agg["fat"]
             per_carbs = agg["carbs"]
+            if recipe_id in declared:
+                d_kcal, d_protein, d_fiber, d_fat, d_carbs, d_servings = declared[recipe_id]
+                servings = d_servings or Decimal(1)
+                if d_kcal is not None:
+                    per_kcal = d_kcal
+                if d_protein is not None:
+                    per_protein = d_protein
+                if d_fiber is not None:
+                    per_fiber = d_fiber
+                if d_fat is not None:
+                    per_fat = d_fat
+                if d_carbs is not None:
+                    per_carbs = d_carbs
+                declared_used += 1
             upsert_recipe_nutrition(
                 conn,
                 recipe_id=recipe_id,
@@ -1007,6 +1037,8 @@ def enrich_nutrition(
                 per_serving_fat_g=per_fat,
                 per_serving_carbs_g=per_carbs,
             )
+        if declared_used:
+            log.info("nutrition.declared_overrides", recipes=declared_used)
 
         coverage = (covered / total) if total else 0.0
         record_metric(conn, MetricName.NUTRITION_ITEMS_TOTAL, total, correlation_id=correlation_id)
