@@ -1,4 +1,4 @@
-.PHONY: help install lint format typecheck test test-unit test-integration migrate run docker-up docker-down
+.PHONY: help install lint format typecheck test test-unit test-integration migrate run paprika-refresh ui docker-up docker-down
 
 help:
 	@echo "Available targets:"
@@ -11,6 +11,8 @@ help:
 	@echo "  test             - run all tests with coverage"
 	@echo "  migrate          - alembic upgrade head"
 	@echo "  run              - meal-planner run"
+	@echo "  paprika-refresh  - sync newest Paprika HTML export + run full pipeline"
+	@echo "  ui               - launch the Streamlit dashboard"
 	@echo "  docker-up        - start postgres + pgadmin"
 	@echo "  docker-down      - stop containers"
 
@@ -42,6 +44,12 @@ migrate:
 
 run:
 	meal-planner run
+
+paprika-refresh:
+	./scripts/paprika_refresh.sh
+
+ui:
+	meal-planner ui
 
 docker-up:
 	docker-compose --profile dev up -d postgres pgadmin
