@@ -62,6 +62,24 @@ def split_meal_types(settings: Settings) -> tuple[list[str], list[str]]:
     return shared, per_user
 
 
+def snack_slot_names(max_snacks: int) -> list[str]:
+    """Slot meal-type names for the day's snacks. One snack keeps the plain
+    'snack' name (backward compatible); 2+ become snack_1 .. snack_N."""
+    if max_snacks <= 1:
+        return ["snack"]
+    return [f"snack_{i}" for i in range(1, max_snacks + 1)]
+
+
+def _expand_snacks(meal_types: list[str], snack_slots: list[str]) -> list[str]:
+    out: list[str] = []
+    for m in meal_types:
+        if m == "snack":
+            out.extend(snack_slots)
+        else:
+            out.append(m)
+    return out
+
+
 @dataclass(frozen=True)
 class ModelInputs:
     recipes: pd.DataFrame
@@ -74,7 +92,7 @@ class ModelInputs:
 def load_inputs(engine: Engine, *, include_non_plant: bool) -> ModelInputs:
     extra_filter = "" if include_non_plant else " WHERE is_plant_based = TRUE"
     recipes = pd.read_sql(
-        f"SELECT recipe_id, title, rating FROM meal_planning.recipe{extra_filter}",
+        f"SELECT recipe_id, title, rating, categories FROM meal_planning.recipe{extra_filter}",
         engine,
     )
     meal_types = pd.read_sql(
@@ -156,6 +174,12 @@ class PreparedData:
     # (profile_name, meal_type) -> recipe_id pinned every day for that profile.
     fixed_assignments: dict[tuple[str, str], int] = field(default_factory=dict)
     fixed_recipe_ids: set[int] = field(default_factory=set)
+    # snack slot meal-type names (e.g. ["snack_1","snack_2","snack_3"]).
+    snack_meal_types: list[str] = field(default_factory=list)
+    # category-substring -> recipe ids in that category (for per-day caps).
+    category_recipe_ids: dict[str, set[int]] = field(default_factory=dict)
+    # category-substring -> max snacks of that category per day.
+    snack_category_limits: dict[str, int] = field(default_factory=dict)
 
 
 def prepare(inputs: ModelInputs, settings: Settings) -> PreparedData:
@@ -252,6 +276,38 @@ def prepare(inputs: ModelInputs, settings: Settings) -> PreparedData:
     profiles = derive_profiles(settings)
     shared_meal_types, per_user_meal_types = split_meal_types(settings)
 
+    # Expand the single 'snack' meal type into up to N optional snack slots.
+    snack_slots = snack_slot_names(settings.optimizer.max_snacks_per_day)
+    snack_meal_types = [s for s in snack_slots if s != "snack"]  # extra slots beyond plain 'snack'
+    if settings.optimizer.max_snacks_per_day > 1:
+        per_user_meal_types = _expand_snacks(per_user_meal_types, snack_slots)
+        shared_meal_types = _expand_snacks(shared_meal_types, snack_slots)
+        meal_types = _expand_snacks(meal_types, snack_slots)
+        snack_meal_types = list(snack_slots)
+        # Each snack slot inherits the 'snack' allow-list.
+        for r in recipes_list:
+            snack_allowed = allowed_meal.get((r, "snack"), 0)
+            for slot in snack_slots:
+                allowed_meal[(r, slot)] = snack_allowed
+
+    # Map each limited category (e.g. "smoothie") to the recipes in it.
+    category_recipe_ids: dict[str, set[int]] = {}
+    limits = settings.optimizer.snack_category_limits
+    if limits and "categories" in inputs.recipes.columns:
+        cat_lookup = {
+            int(rid): str(cats) if cats is not None and not pd.isna(cats) else ""
+            for rid, cats in zip(
+                inputs.recipes["recipe_id"].tolist(),
+                inputs.recipes["categories"].tolist(),
+                strict=False,
+            )
+        }
+        for category in limits:
+            needle = category.strip().lower()
+            category_recipe_ids[category] = {
+                rid for rid, cats in cat_lookup.items() if needle in cats.lower()
+            }
+
     # Resolve per-profile fixed meals (recipe title -> recipe_id). The pinned
     # recipe must be in the filtered recipe set and assigned to a per-user meal
     # type; we force it allowed for that meal so the pin is feasible.
@@ -308,4 +364,7 @@ def prepare(inputs: ModelInputs, settings: Settings) -> PreparedData:
         group_portions=group_portions,
         fixed_assignments=fixed_assignments,
         fixed_recipe_ids=fixed_recipe_ids,
+        snack_meal_types=snack_meal_types,
+        category_recipe_ids=category_recipe_ids,
+        snack_category_limits=dict(settings.optimizer.snack_category_limits),
     )

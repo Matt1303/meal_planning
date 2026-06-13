@@ -72,6 +72,9 @@ optimizer:
   calories_daily_max: 2400
   fiber_daily_min: 30
   snack_optional: false
+  max_snacks_per_day: 3
+  snack_category_limits:
+    smoothie: 1
   max_recipe_repeats: 2
   solver_time_limit: 300
   solver_mip_gap: 0.05

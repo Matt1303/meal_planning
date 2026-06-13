@@ -53,6 +53,24 @@ def _format_gap(label: str, value: float, unit: str) -> str:
     return f"{label}: ~{value:.0f} {unit}"
 
 
+def _meal_label(meal_type: str) -> str:
+    if meal_type.startswith("snack_"):
+        return f"Snack {meal_type.split('_', 1)[1]}"
+    return meal_type.title()
+
+
+_MEAL_ORDER = ["breakfast", "lunch", "dinner", "snack", "snack_1", "snack_2", "snack_3", "snack_4"]
+
+
+def _ordered_meal_types(view: PlanView) -> list[str]:
+    present = {
+        meal.meal_type for day in view.days for prof in day.per_profile for meal in prof.meals
+    }
+    ordered = [m for m in _MEAL_ORDER if m in present]
+    ordered.extend(sorted(m for m in present if m not in ordered))
+    return ordered
+
+
 def _stars(rating: float | None) -> str:
     if rating is None:
         return ""
@@ -154,28 +172,34 @@ def _render_profile_day(
 ) -> None:
     with st.container(border=True):
         st.markdown(f"**{day_user.display_name}**")
+        shortfall_shown = False
         for meal_type in meal_types:
+            is_snack = meal_type == "snack" or meal_type.startswith("snack_")
             entries = [m for m in day_user.meals if m.meal_type == meal_type]
             entry = entries[0] if entries else None
+            label = _meal_label(meal_type)
             if entry is None or entry.title is None:
-                if meal_type == "snack" and day_user.gaps.any_shortfall:
-                    parts: list[str] = []
-                    if day_user.gaps.kcal > 0:
-                        parts.append(_format_gap("kcal", day_user.gaps.kcal, "kcal"))
-                    if day_user.gaps.protein_g > 0:
-                        parts.append(_format_gap("protein", day_user.gaps.protein_g, "g"))
-                    if day_user.gaps.fiber_g > 0:
-                        parts.append(_format_gap("fibre", day_user.gaps.fiber_g, "g"))
-                    detail = " / ".join(parts) if parts else "no shortfall"
-                    st.info(
-                        f"**{meal_type.title()}**: source your own to top up — {detail} "
-                        "(e.g. a high-protein yoghurt or smoothie)."
-                    )
+                if is_snack:
+                    # Empty snack slots are hidden; show the self-source note once.
+                    if day_user.gaps.any_shortfall and not shortfall_shown:
+                        parts: list[str] = []
+                        if day_user.gaps.kcal > 0:
+                            parts.append(_format_gap("kcal", day_user.gaps.kcal, "kcal"))
+                        if day_user.gaps.protein_g > 0:
+                            parts.append(_format_gap("protein", day_user.gaps.protein_g, "g"))
+                        if day_user.gaps.fiber_g > 0:
+                            parts.append(_format_gap("fibre", day_user.gaps.fiber_g, "g"))
+                        detail = " / ".join(parts) if parts else "no shortfall"
+                        st.info(
+                            f"**Snack**: source your own to top up — {detail} "
+                            "(e.g. a high-protein yoghurt or smoothie)."
+                        )
+                        shortfall_shown = True
                 else:
-                    st.write(f"**{meal_type.title()}**: _(none)_")
+                    st.write(f"**{label}**: _(none)_")
                 continue
 
-            heading = f"**{meal_type.title()}**: {entry.title}"
+            heading = f"**{label}**: {entry.title}"
             if entry.rating is not None:
                 heading += f"  \n<span style='color:#b58900;font-size:0.85em'>{_stars(entry.rating)}</span>"
             heading += (
@@ -411,6 +435,14 @@ def render() -> None:
         max_value=14,
         value=int(base_settings.optimizer.planning_horizon_days),
     )
+    max_snacks = st.sidebar.slider(
+        "Max snacks per day",
+        min_value=1,
+        max_value=5,
+        value=int(base_settings.optimizer.max_snacks_per_day),
+        help="Up to this many snacks per person per day (filled only when they "
+        "help hit targets). At most one snack may be a smoothie.",
+    )
 
     settings = base_settings.model_copy(
         update={
@@ -425,6 +457,7 @@ def render() -> None:
                     "min_rating": min_rating,
                     "max_recipe_repeats": max_repeats,
                     "planning_horizon_days": horizon,
+                    "max_snacks_per_day": max_snacks,
                     "snack_optional": "snack" in base_settings.meal_types,
                     "calories_daily_min": None,
                     "calories_daily_max": None,
@@ -457,7 +490,7 @@ def render() -> None:
 
     plan_tab, dashboard_tab = st.tabs(["Plan view", "Dashboard"])
     with plan_tab:
-        _render_plan(view, list(base_settings.meal_types))
+        _render_plan(view, _ordered_meal_types(view))
     with dashboard_tab:
         _render_dashboard(view, settings)
 

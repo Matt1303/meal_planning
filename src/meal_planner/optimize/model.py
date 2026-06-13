@@ -151,10 +151,15 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
 
         model.shared_allowed = Constraint(model.R, model.D, model.SHARED_M, rule=shared_allowed)
 
+    snack_slot_set = set(prepared.snack_meal_types)
+
     if prepared.per_user_meal_types:
 
         def user_slot_rule(m: Any, p: str, d: int, meal: str) -> Any:
             expr = sum(m.x_user[p, r, d, meal] for r in m.R)
+            if meal in snack_slot_set:
+                # Each extra snack slot is optional — fill 0 or 1 recipe.
+                return expr <= 1
             if snack_optional and meal == "snack" and hasattr(m, "slack_snack"):
                 return expr + m.slack_snack[p, d, meal] == 1
             return expr == 1
@@ -178,6 +183,29 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
                 return m.x_user[p, r, d, meal] == 1
 
             model.fixed_meal = Constraint(model.FIXED, rule=fixed_rule)
+
+        # Cap how many of the day's snacks come from a given category, e.g.
+        # at most one smoothie among the snack slots.
+        recipes_set = set(prepared.recipes)
+        cap_categories = [
+            cat
+            for cat in prepared.snack_category_limits
+            if snack_slot_set and prepared.category_recipe_ids.get(cat)
+        ]
+        if cap_categories:
+            cap_keys = [
+                (p, d, cat) for p in profile_names for d in prepared.days for cat in cap_categories
+            ]
+            model.SNACK_CAP = Set(initialize=cap_keys, dimen=3)
+
+            def snack_category_rule(m: Any, p: str, d: int, cat: str) -> Any:
+                limit = prepared.snack_category_limits[cat]
+                rids = prepared.category_recipe_ids.get(cat, set()) & recipes_set
+                return (
+                    sum(m.x_user[p, r, d, slot] for slot in snack_slot_set for r in rids) <= limit
+                )
+
+            model.snack_category_cap = Constraint(model.SNACK_CAP, rule=snack_category_rule)
 
     def repeat_rule(m: Any, r: int) -> Any:
         # Fixed meals are pinned every day by design — exempt from the repeat cap.

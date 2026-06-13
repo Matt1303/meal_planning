@@ -9,10 +9,22 @@ from meal_planner.config import HouseholdSettings, ProfileTargets, Settings
 
 
 @pytest.mark.unit
-def test_household_empty_by_default() -> None:
+def test_pipeline_config_household_loads() -> None:
+    # The shipped config defines the Matt + Ellie household; verify it loads
+    # with shared lunch/dinner and Matt's pinned breakfast.
     settings = Settings.load(Path("config/pipeline.yaml"))
-    assert settings.household.profiles == []
-    assert settings.household.shared_meal_types == []
+    names = {p.name for p in settings.household.profiles}
+    assert names == {"matt", "ellie"}
+    assert settings.household.shared_meal_types == ["lunch", "dinner"]
+    matt = next(p for p in settings.household.profiles if p.name == "matt")
+    assert matt.fixed_meals == {"breakfast": "Matt Breakfast Smoothie"}
+
+
+@pytest.mark.unit
+def test_household_empty_when_unset() -> None:
+    household = HouseholdSettings()
+    assert household.profiles == []
+    assert household.shared_meal_types == []
 
 
 @pytest.mark.unit
