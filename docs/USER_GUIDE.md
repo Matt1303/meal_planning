@@ -279,21 +279,101 @@ Paprika, or raise the group's weight, and re-refresh.
 
 ---
 
-## 6. Tuning knobs
+## 6. Settings — where and how to change things
 
-Most live tuning is in the **Streamlit sidebar** (no code/config edit needed):
+There are **three** places a setting can live. Use whichever is easiest for what
+you're doing:
 
-- **kcal / protein / fibre targets** per person
-- **Two-user toggle** + which meal types are shared
-- **Rating weight** and **minimum rating**
-- **Spacing penalty weight** and **max repeats/week**
-- **Planning horizon** (days)
+| Place | Best for | Permanent? |
+|---|---|---|
+| **Streamlit sidebar** | Quick experiments — "what if I want more protein?" | No — applies to the current screen only, until you reload |
+| **`config/pipeline.yaml`** | The defaults you always want | Yes — every run uses them |
+| **Command-line flags** | One-off runs | No — just that one command |
 
-Click **Generate plan** to re-solve with the new settings (this re-runs only the
-optimise step against already-enriched data, so it's fast).
+### 6.1 The config file (`config/pipeline.yaml`)
 
-Defaults and non-UI settings live in `config/pipeline.yaml` under `optimizer:`
-and `nutrition:`.
+This is the master settings file — a plain-text file you can open in any editor
+(it's in the project folder under `config/`). Settings are grouped under
+headings like `optimizer:` and `nutrition:`. The format is **YAML**: a
+`name: value` pair on each line, and **indentation matters** (each setting under
+`optimizer:` is indented two spaces).
+
+To change a setting, find its line and edit the value after the colon. For
+example, to only ever include recipes you've rated 4 stars or higher, and to
+allow non-plant recipes:
+
+```yaml
+optimizer:
+  min_rating: 4            # was 3
+  ...
+  include_non_plant: true  # was false
+```
+
+Save the file, then run `make paprika-refresh` (or `make run`) and the new
+values take effect. A few safety notes for non-programmers:
+
+- Keep the **indentation** exactly as it was (two spaces, not a tab).
+- Don't add quotes around numbers or `true`/`false`.
+- `true`/`false` must be lower-case.
+- If a run later complains about the config, you probably changed indentation or
+  mistyped a value — undo your edit and try again.
+
+### 6.2 The most useful settings (plain English)
+
+All of these live under `optimizer:` in `config/pipeline.yaml` unless noted.
+
+| Setting | What it does | Default |
+|---|---|---|
+| `min_rating` | Lowest Paprika star rating a recipe can have and still be used. Raise to be pickier. **Also a live slider in the sidebar.** | `3` |
+| `include_non_plant` | `false` = plant-based recipes only; `true` = allow everything. **Also a `--include-non-plant` CLI flag.** | `false` |
+| `calories_daily_min` / `calories_daily_max` | The daily calorie window each person should land in. **Also sidebar sliders, per person.** | `1800` / `2400` |
+| `fiber_daily_min` | Minimum grams of fibre per day. **Also a sidebar control.** | `30` |
+| `max_recipe_repeats` | How many times one recipe may appear in the week. **Also a sidebar slider.** | `2` |
+| `planning_horizon_days` | How many days the plan covers. **Also a sidebar slider.** | `7` |
+| `rating_weight` | How strongly the planner favours your higher-rated recipes. Higher = leans harder on favourites. **Also a sidebar slider.** | `1.0` |
+| `diversity_weight` | How strongly it rewards variety (more distinct recipes across the week). | `1.0` |
+| `recency_weight` | How strongly it avoids recipes you ate recently. | `0.8` |
+| `recency_half_life_days` | "Recently" means roughly this many days — a recipe eaten this long ago is treated as half-forgotten. | `30` |
+| `spacing_weight` | How hard it pushes repeats of the same recipe apart (3–4 days). **Also a sidebar slider.** | `2.0` |
+| `slack_weight` | How hard it tries to *hit* nutrition/food-group targets vs. softening them. Higher = tries harder. | `5.0` |
+| `calories_weekly_min` / `max`, `fiber_weekly_min` | Weekly envelopes (the daily ones usually dominate). | see file |
+| `solver_time_limit` | Max seconds the solver may spend before giving its best answer. | `300` |
+
+> The "weights" (rating, diversity, recency, spacing, slack) are the relative
+> pulls in the optimiser's scoring (see §3.2). You rarely need to touch them —
+> start with the targets (`min_rating`, calories, fibre, repeats) which have the
+> most obvious effect.
+
+Nutrition-related settings live under `nutrition:` (see §4) — e.g.
+`cooking_oil_absorption` (default `0.5`) and `llm_macros_min_confidence`
+(`medium`). These have sensible defaults and most users never change them.
+
+### 6.3 The sidebar (fastest for experiments)
+
+When the dashboard is open, the left sidebar lets you change the common settings
+**without editing any files**:
+
+- kcal / protein / fibre targets — **per person**
+- two-user toggle + which meals are shared (lunch/dinner)
+- rating weight and minimum rating
+- spacing penalty weight and max repeats per week
+- planning horizon (days)
+
+Change anything, then click **Generate plan**. It re-solves using the
+already-enriched nutrition data, so it's fast (a few seconds). These changes are
+*temporary* — they don't write back to `config/pipeline.yaml`. When you find a
+combination you like, copy those values into the config file to make them stick.
+
+### 6.4 Command-line flags (one-off runs)
+
+For a single run without changing anything permanently:
+
+```bash
+meal-planner run --include-non-plant   # allow non-plant recipes, just this once
+meal-planner run --ignore-coverage     # don't stop if nutrition coverage is low
+```
+
+Run `meal-planner run --help` to see all flags.
 
 ---
 
