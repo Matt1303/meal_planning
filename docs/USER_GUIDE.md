@@ -10,6 +10,10 @@ optimiser, nutrition and Daily Dozen logic actually work.
 Your recipes live in the **Paprika** app. The planner reads an HTML export of
 those recipes, enriches them with nutrition data, and solves for a weekly plan.
 
+> **Prerequisite:** Docker Desktop running. Docker hosts the Postgres database
+> (and nothing else — the pipeline itself runs natively in `.venv`). The refresh
+> script starts the Postgres container for you if it isn't already up.
+
 ### Step by step
 
 1. **Edit recipes in Paprika** — add, change, delete, re-rate, adjust servings.
@@ -40,7 +44,17 @@ That's it — one manual export, one command.
 2. `rsync`s that export's `Recipes/` folder into the repo's
    `recipes_html/Recipes/`, **deleting** recipes you removed in Paprika so the
    database stays in step.
-3. Runs the full pipeline: `meal-planner run`.
+3. Loads `.env` for credentials and forces the DB host to `localhost` (the
+   `.env` ships `DB_HOST=postgres` for in-container use; on your Mac the
+   database is reached on `localhost`).
+4. **Ensures Postgres is running** — if it can't reach the database it starts
+   the Docker `postgres` service and waits for it. (Docker Desktop must be
+   running; if it isn't, you get a clear message instead of a hang.)
+5. Applies any pending DB migrations (`alembic upgrade head`).
+6. Runs the full pipeline: `meal-planner run`.
+
+So from a cold terminal the only prerequisite is **Docker Desktop running** —
+no manual `docker compose up`, no env juggling.
 
 ### Environment overrides
 

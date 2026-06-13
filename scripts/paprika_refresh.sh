@@ -32,6 +32,56 @@ TARGET_DIR="${RECIPES_HTML_DIR:-$REPO_ROOT/recipes_html}"
 log() { printf '\033[1;34m[paprika-refresh]\033[0m %s\n' "$*"; }
 err() { printf '\033[1;31m[paprika-refresh] ERROR:\033[0m %s\n' "$*" >&2; }
 
+# meal-planner CLI: prefer the repo venv, fall back to PATH.
+MEAL_PLANNER="$REPO_ROOT/.venv/bin/meal-planner"
+[[ -x "$MEAL_PLANNER" ]] || MEAL_PLANNER="meal-planner"
+
+# Load .env (DB creds, ANTHROPIC_API_KEY, USDA key, …) then force the DB host to
+# localhost: .env ships DB_HOST=postgres for in-container use, but this script
+# runs on the host where Postgres is reached via the mapped port on localhost.
+if [[ -f "$REPO_ROOT/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$REPO_ROOT/.env"
+  set +a
+fi
+export DB_HOST="localhost"
+export DB_PORT="${DB_PORT:-5432}"
+
+# docker compose (v2 plugin) with a fallback to legacy docker-compose.
+compose() {
+  if docker compose version >/dev/null 2>&1; then
+    docker compose "$@"
+  else
+    docker-compose "$@"
+  fi
+}
+
+db_reachable() { "$MEAL_PLANNER" health >/dev/null 2>&1; }
+
+ensure_postgres() {
+  if db_reachable; then
+    return 0
+  fi
+  log "Postgres not reachable on localhost:$DB_PORT — attempting to start it"
+  if ! docker info >/dev/null 2>&1; then
+    err "Docker isn't running. Start Docker Desktop (it hosts Postgres) and retry,"
+    err "or point DB_HOST/DB_PORT at a Postgres you run yourself."
+    exit 1
+  fi
+  ( cd "$REPO_ROOT" && compose up -d postgres )
+  log "waiting for Postgres to accept connections…"
+  for _ in $(seq 1 30); do
+    if db_reachable; then
+      log "Postgres is up"
+      return 0
+    fi
+    sleep 1
+  done
+  err "Postgres did not become reachable in time"
+  exit 1
+}
+
 if [[ ! -d "$EXPORT_DIR" ]]; then
   err "export dir not found: $EXPORT_DIR"
   err "Set PAPRIKA_EXPORT_DIR or export recipes from Paprika into that folder."
@@ -82,12 +132,13 @@ if [[ "${SKIP_PIPELINE:-0}" == "1" ]]; then
   exit 0
 fi
 
+ensure_postgres
+
+log "applying any pending DB migrations"
+( cd "$REPO_ROOT" && \
+  { [[ -x ".venv/bin/alembic" ]] && .venv/bin/alembic upgrade head || alembic upgrade head; } )
+
 log "running pipeline: meal-planner run"
-cd "$REPO_ROOT"
-if [[ -x ".venv/bin/meal-planner" ]]; then
-  .venv/bin/meal-planner run
-else
-  meal-planner run
-fi
+( cd "$REPO_ROOT" && "$MEAL_PLANNER" run )
 
 log "done — open the Streamlit dashboard to see the refreshed plan"
