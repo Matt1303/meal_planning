@@ -7,7 +7,8 @@
       "category": "p.categories",
       "rating": "p.rating",
       "servings": "span[itemprop=recipeYield]",
-      "difficulty": "span[itemprop=difficulty]"
+      "difficulty": "span[itemprop=difficulty]",
+      "nutrition": "div.nutrition.text"
     }
   }
 }

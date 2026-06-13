@@ -206,13 +206,24 @@ _FRACTION_VALUES: dict[str, str] = {
 _QUANTULUM_NULL_UNITS = {"year", "years", "dimensionless"}
 
 
+_SIZE_ADJECTIVE = re.compile(
+    r"(?P<num>\d|½|¼|¾|⅓|⅔)\s+(?:large|medium|small|big|extra[- ]large|jumbo|mini)\s+",
+    re.IGNORECASE,
+)
+
+
 def _preprocess_fraction_words(text: str) -> str:
     def _replace(match: re.Match[str]) -> str:
         frac = match.group("frac").lower().replace("-", " ")
         value = _FRACTION_VALUES.get(frac)
         return f"{value} " if value else match.group(0)
 
-    return _FRACTION_PREFIX.sub(_replace, text)
+    out = _FRACTION_PREFIX.sub(_replace, text)
+    # Drop a size adjective sitting between a count and the food ("1 large
+    # onion" -> "1 onion") so quantulum reads the count and the piece fallback
+    # can size it.
+    out = _SIZE_ADJECTIVE.sub(lambda m: f"{m.group('num')} ", out)
+    return out
 
 
 def quantulum_parse(text: str) -> tuple[Decimal | None, str | None, bool]:
@@ -583,8 +594,11 @@ def _build_update(
     ctx: ParseContext,
 ) -> ParseUpdate:
     per_serving: Decimal | None = None
-    if base.quantity_grams is not None and servings_count and servings_count > 0:
-        per_serving = base.quantity_grams / servings_count
+    if base.quantity_grams is not None:
+        # Recipes with no servings count are treated as a single serving so
+        # per-serving grams (and therefore nutrition) still compute.
+        servings = servings_count if servings_count and servings_count > 0 else Decimal(1)
+        per_serving = base.quantity_grams / servings
     portions, met = _portions(per_serving, base.food_group, ctx.portion_sizes)
     return ParseUpdate(
         recipe_id=recipe_id,

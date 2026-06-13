@@ -84,3 +84,19 @@ def test_cubic_centimetre_alias_resolves(units: UnitTable) -> None:
 @pytest.mark.unit
 def test_known_unit_recognises_alias(units: UnitTable) -> None:
     assert units.known_unit("cubic centimetre")
+
+
+@pytest.mark.unit
+def test_size_adjective_treated_as_piece(units: UnitTable) -> None:
+    # quantulum reads "1 large onion" with unit "large"
+    assert units.to_grams(Decimal(1), "large", "onion") == Decimal(150)
+    assert units.to_grams(Decimal(1), "medium", "carrot") == Decimal(75)
+
+
+@pytest.mark.unit
+def test_parenthetical_canonical_resolves_piece(units: UnitTable) -> None:
+    # canonical "courgettes (zucchini)" should hit the "courgettes" piece weight
+    grams = units.to_grams(Decimal(1), None, "courgettes (zucchini)")
+    assert grams is not None and grams > 0
+    grams2 = units.to_grams(Decimal(1), "large", "aubergine (eggplant)")
+    assert grams2 is not None and grams2 > 0

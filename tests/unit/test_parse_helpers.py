@@ -5,10 +5,24 @@ from decimal import Decimal
 import pytest
 
 from meal_planner.parse import (
+    _preprocess_fraction_words,
     normalize_text,
     regex_parse_quantity,
     strip_quantity,
 )
+
+
+@pytest.mark.unit
+def test_preprocess_strips_size_adjective() -> None:
+    assert _preprocess_fraction_words("1 large avocado") == "1 avocado"
+    assert _preprocess_fraction_words("1 medium onion, chopped") == "1 onion, chopped"
+    assert _preprocess_fraction_words("2 large oranges") == "2 oranges"
+
+
+@pytest.mark.unit
+def test_preprocess_keeps_real_units() -> None:
+    # a size word not between a count and food is left alone
+    assert _preprocess_fraction_words("200 g flour") == "200 g flour"
 
 
 @pytest.mark.unit

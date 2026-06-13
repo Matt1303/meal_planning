@@ -1,15 +1,43 @@
 from __future__ import annotations
 
 import csv
+import re
 from decimal import Decimal
 from pathlib import Path
+
+_PARENS = re.compile(r"\([^)]*\)")
+
+
+def _strip_parenthetical(name: str) -> str:
+    return _PARENS.sub(" ", name).strip()
+
 
 VOLUME_UNITS: frozenset[str] = frozenset(
     {"ml", "millilitre", "millilitres", "l", "litre", "litres", "liter", "liters", "cup", "cups"}
 )
 
 PIECE_UNIT_TOKENS: frozenset[str] = frozenset(
-    {"piece", "pieces", "each", "whole", "count", "item", "items", "unit", "units"}
+    {
+        "piece",
+        "pieces",
+        "each",
+        "whole",
+        "count",
+        "item",
+        "items",
+        "unit",
+        "units",
+        # quantulum frequently reads a size adjective ("1 large onion") as the
+        # unit — treat these as "one piece".
+        "large",
+        "medium",
+        "small",
+        "big",
+        "extra large",
+        "xl",
+        "jumbo",
+        "mini",
+    }
 )
 
 UNIT_ALIASES: dict[str, str] = {
@@ -66,9 +94,23 @@ class UnitTable:
                     grams = ml_value * density
             return grams
         if ingredient and (not unit_l or unit_l in PIECE_UNIT_TOKENS):
-            piece = self._piece_grams.get(ingredient.strip().lower())
+            piece = self._piece_lookup(ingredient)
             if piece is not None:
                 return Decimal(str(value)) * piece
+        return None
+
+    def _piece_lookup(self, ingredient: str) -> Decimal | None:
+        key = ingredient.strip().lower()
+        piece = self._piece_grams.get(key)
+        if piece is not None:
+            return piece
+        # Canonicals are sometimes parenthesised ("courgettes (zucchini)");
+        # fall back to the base name and a singular/plural swap.
+        base = _strip_parenthetical(key)
+        for candidate in (base, base.rstrip("s"), base + "s"):
+            piece = self._piece_grams.get(candidate)
+            if piece is not None:
+                return piece
         return None
 
     def known_unit(self, unit: str | None) -> bool:
