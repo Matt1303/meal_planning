@@ -76,9 +76,12 @@ optimizer:
   solver_time_limit: 300
   solver_mip_gap: 0.05
   planning_horizon_days: 7
-  calories_weekly_min: 12600
-  calories_weekly_max: 16800
-  fiber_weekly_min: 210
+  # Weekly calorie/fibre caps disabled: the per-profile daily targets in the
+  # household block below drive the plan (the weekly caps were a single-user
+  # default and would fight two very different daily targets).
+  calories_weekly_min: null
+  calories_weekly_max: null
+  fiber_weekly_min: null
   weekly_group_portions_min: {}
   include_non_plant: false
 
@@ -87,5 +90,23 @@ household:
   # meal types listed in shared_meal_types are picked once (same recipe for
   # both users on a day); other meal types are picked per profile.
   # Leave profiles: [] to run in single-user mode using optimizer.* targets.
-  profiles: []
-  shared_meal_types: []
+  profiles:
+    - name: matt
+      display_name: Matt
+      # Calorie target 3300/day (±200 band so the solver has room).
+      calories_daily_min: 3100
+      calories_daily_max: 3500
+      protein_daily_min: 190
+      fiber_daily_min: 30
+      fixed_meals:
+        breakfast: "Matt Breakfast Smoothie"
+    - name: ellie
+      display_name: Ellie
+      # Calorie target 1500/day (±150 band).
+      calories_daily_min: 1350
+      calories_daily_max: 1650
+      protein_daily_min: 100
+      fiber_daily_min: 25
+  shared_meal_types:
+    - lunch
+    - dinner
