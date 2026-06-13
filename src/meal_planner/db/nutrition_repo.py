@@ -14,6 +14,8 @@ class CachedNutrition:
     fat_g_per_100g: Decimal | None
     carbs_g_per_100g: Decimal | None
     source: str | None
+    match_score: Decimal | None = None
+    match_source_name: str | None = None
 
 
 def fetch_cache(conn: Connection, ingredient_canonical: str) -> CachedNutrition | None:
@@ -21,7 +23,8 @@ def fetch_cache(conn: Connection, ingredient_canonical: str) -> CachedNutrition 
         text(
             """
             SELECT kcal_per_100g, fiber_g_per_100g, protein_g_per_100g,
-                   fat_g_per_100g, carbs_g_per_100g, source
+                   fat_g_per_100g, carbs_g_per_100g, source,
+                   match_score, match_source_name
             FROM meal_planning.ingredient_nutrition_cache
             WHERE ingredient_canonical = :ing
             """
@@ -37,6 +40,8 @@ def fetch_cache(conn: Connection, ingredient_canonical: str) -> CachedNutrition 
         fat_g_per_100g=row[3],
         carbs_g_per_100g=row[4],
         source=row[5],
+        match_score=row[6],
+        match_source_name=row[7],
     )
 
 

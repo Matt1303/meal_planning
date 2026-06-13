@@ -638,8 +638,8 @@ def _from_cached(cache: CachedNutrition) -> NutritionResult:
         fat_g_per_100g=cache.fat_g_per_100g,
         carbs_g_per_100g=cache.carbs_g_per_100g,
         source=cache.source,
-        match_score=None,
-        match_source_name=None,
+        match_score=cache.match_score,
+        match_source_name=cache.match_source_name,
     )
 
 
@@ -663,17 +663,22 @@ def _macros_to_result(macros: NutritionMacros) -> NutritionResult:
     )
 
 
-def _fetch_claude_macros(
+def _resolve_claude_macros_committed(
+    eng: Engine,
     llm: LLMClient,
-    canonicals: list[str],
+    pending: list[str],
     sample_text: dict[str, str],
     batch_size: int,
-) -> dict[str, NutritionMacros]:
-    if not canonicals:
-        return {}
-    result: dict[str, NutritionMacros] = {}
-    for start in range(0, len(canonicals), batch_size):
-        batch = canonicals[start : start + batch_size]
+    min_conf: str,
+) -> set[str]:
+    """Fetch Claude per-100g macros for pending canonicals and commit each
+    batch's accepted results to the cache immediately, so an interrupt keeps
+    the work (and API spend) done so far. Returns the canonicals cached."""
+    cached: set[str] = set()
+    total_returned = 0
+    total_accepted = 0
+    for start in range(0, len(pending), batch_size):
+        batch = pending[start : start + batch_size]
         queries = [
             NutritionQuery(
                 ingredient_canonical=canonical,
@@ -686,55 +691,90 @@ def _fetch_claude_macros(
         except Exception as exc:
             log.warning("nutrition.claude_failed", error=str(exc), batch=start)
             continue
-        for item in macros:
-            result[item.ingredient_canonical] = item
-    return result
+        total_returned += len(macros)
+        with eng.begin() as conn:
+            for item in macros:
+                if not _confidence_meets(item.confidence, min_conf):
+                    continue
+                if item.kcal_per_100g is None:
+                    continue
+                result = _macros_to_result(item)
+                upsert_cache(
+                    conn,
+                    ingredient_canonical=item.ingredient_canonical,
+                    kcal_per_100g=result.kcal_per_100g,
+                    fiber_g_per_100g=result.fiber_g_per_100g,
+                    protein_g_per_100g=result.protein_g_per_100g,
+                    fat_g_per_100g=result.fat_g_per_100g,
+                    carbs_g_per_100g=result.carbs_g_per_100g,
+                    source=result.source,
+                    match_score=result.match_score,
+                    match_source_name=result.match_source_name,
+                )
+                cached.add(item.ingredient_canonical)
+                total_accepted += 1
+    log.info(
+        "nutrition.claude_primary_complete",
+        queried=len(pending),
+        returned=total_returned,
+        accepted=total_accepted,
+    )
+    return cached
 
 
-def _verify_and_correct(
-    conn: Connection,
+def _verify_and_correct_committed(
+    eng: Engine,
     settings: Settings,
-    nutrition_by_canonical: dict[str, NutritionResult],
+    canonicals: list[str],
     cofid: pd.DataFrame | None,
-) -> dict[str, NutritionResult]:
+) -> None:
+    """LLM-verify low-confidence cached matches, committing each batch's
+    corrections to the cache immediately so an interrupt keeps progress.
+
+    Reads suspects from the committed cache, so it can run as its own phase
+    after the lookup phase has persisted everything."""
     if not settings.nutrition.llm_verify_enabled:
-        return nutrition_by_canonical
+        return
     llm = get_llm_client(settings.llm)
     if isinstance(llm, NullLLM):
-        return nutrition_by_canonical
+        return
 
     threshold = settings.nutrition.llm_verify_score_threshold
-    sample_text = fetch_sample_raw_text(conn)
-    suspects: list[NutritionMatchCandidate] = []
-    for canonical, result in nutrition_by_canonical.items():
-        # Treat a missing score (most OFF hits) as suspect — the OFF picker is
-        # heuristic, so we still want the LLM to sanity-check it.
-        score = float(result.match_score) if result.match_score is not None else 0.0
-        if score >= threshold:
-            continue
-        suspects.append(
-            NutritionMatchCandidate(
-                ingredient_canonical=canonical,
-                ingredient_raw_text=sample_text.get(canonical, canonical),
-                matched_food_name=result.match_source_name,
-                match_source=result.source or "unknown",
-                match_score=score,
-                kcal_per_100g=float(result.kcal_per_100g) if result.kcal_per_100g else None,
-                protein_per_100g=(
-                    float(result.protein_g_per_100g) if result.protein_g_per_100g else None
-                ),
-                fiber_per_100g=(
-                    float(result.fiber_g_per_100g) if result.fiber_g_per_100g else None
-                ),
+    with eng.connect() as conn:
+        sample_text = fetch_sample_raw_text(conn)
+        suspects: list[NutritionMatchCandidate] = []
+        for canonical in canonicals:
+            cached = fetch_cache(conn, canonical)
+            if cached is None:
+                continue
+            # Treat a missing score (most OFF hits) as suspect — the OFF picker
+            # is heuristic, so we still want the LLM to sanity-check it.
+            score = float(cached.match_score) if cached.match_score is not None else 0.0
+            if score >= threshold:
+                continue
+            suspects.append(
+                NutritionMatchCandidate(
+                    ingredient_canonical=canonical,
+                    ingredient_raw_text=sample_text.get(canonical, canonical),
+                    matched_food_name=cached.match_source_name,
+                    match_source=cached.source or "unknown",
+                    match_score=score,
+                    kcal_per_100g=float(cached.kcal_per_100g) if cached.kcal_per_100g else None,
+                    protein_per_100g=(
+                        float(cached.protein_g_per_100g) if cached.protein_g_per_100g else None
+                    ),
+                    fiber_per_100g=(
+                        float(cached.fiber_g_per_100g) if cached.fiber_g_per_100g else None
+                    ),
+                )
             )
-        )
     if not suspects:
-        return nutrition_by_canonical
+        return
 
     log.info("nutrition.llm_verify_start", suspect_count=len(suspects))
-    verdicts_by_canonical: dict[str, str] = {}
-    alternatives: dict[str, str] = {}
     batch_size = settings.nutrition.llm_verify_batch_size
+    rejected = 0
+    re_looked_up = 0
     for start in range(0, len(suspects), batch_size):
         batch = suspects[start : start + batch_size]
         try:
@@ -742,58 +782,53 @@ def _verify_and_correct(
         except Exception as exc:
             log.warning("nutrition.llm_verify_failed", error=str(exc), batch=start)
             continue
-        for verdict in verdicts:
-            verdicts_by_canonical[verdict.ingredient_canonical] = verdict.decision
-            if verdict.decision == "alternative" and verdict.alternative_query:
-                alternatives[verdict.ingredient_canonical] = verdict.alternative_query
-
-    rejected = 0
-    re_looked_up = 0
-    for canonical, decision in verdicts_by_canonical.items():
-        if decision == "reject":
-            delete_cache(conn, canonical)
-            nutrition_by_canonical.pop(canonical, None)
-            rejected += 1
-        elif decision == "alternative":
-            alt_query = alternatives.get(canonical)
-            if not alt_query:
-                continue
+        alternatives = {
+            v.ingredient_canonical: v.alternative_query
+            for v in verdicts
+            if v.decision == "alternative" and v.alternative_query
+        }
+        # Resolve any alternative queries (network) before opening the tx.
+        replacements: dict[str, NutritionResult] = {}
+        for canonical, alt_query in alternatives.items():
             new_result = _lookup_with_fallback(
-                alt_query,
-                cofid,
-                settings,
-                prefer_canonical=canonical,
-                cofid_min_score=90.0,
+                alt_query, cofid, settings, prefer_canonical=canonical, cofid_min_score=90.0
             )
             if new_result is not None:
-                delete_cache(conn, canonical)
-                upsert_cache(
-                    conn,
-                    ingredient_canonical=canonical,
-                    kcal_per_100g=new_result.kcal_per_100g,
-                    fiber_g_per_100g=new_result.fiber_g_per_100g,
-                    protein_g_per_100g=new_result.protein_g_per_100g,
-                    fat_g_per_100g=new_result.fat_g_per_100g,
-                    carbs_g_per_100g=new_result.carbs_g_per_100g,
-                    source=f"{new_result.source}_llm",
-                    match_score=Decimal("100"),
-                    match_source_name=new_result.match_source_name,
-                )
-                nutrition_by_canonical[canonical] = new_result
-                re_looked_up += 1
-            else:
-                # LLM said the original match is wrong and the alternative
-                # query couldn't find a clean replacement; drop the bad match.
-                delete_cache(conn, canonical)
-                nutrition_by_canonical.pop(canonical, None)
-                rejected += 1
+                replacements[canonical] = new_result
+        with eng.begin() as conn:
+            for verdict in verdicts:
+                canonical = verdict.ingredient_canonical
+                if verdict.decision == "reject":
+                    delete_cache(conn, canonical)
+                    rejected += 1
+                elif verdict.decision == "alternative":
+                    new_result = replacements.get(canonical)
+                    if new_result is not None:
+                        delete_cache(conn, canonical)
+                        upsert_cache(
+                            conn,
+                            ingredient_canonical=canonical,
+                            kcal_per_100g=new_result.kcal_per_100g,
+                            fiber_g_per_100g=new_result.fiber_g_per_100g,
+                            protein_g_per_100g=new_result.protein_g_per_100g,
+                            fat_g_per_100g=new_result.fat_g_per_100g,
+                            carbs_g_per_100g=new_result.carbs_g_per_100g,
+                            source=f"{new_result.source}_llm",
+                            match_score=Decimal("100"),
+                            match_source_name=new_result.match_source_name,
+                        )
+                        re_looked_up += 1
+                    else:
+                        # LLM said the match is wrong and no clean replacement
+                        # was found — drop the bad match.
+                        delete_cache(conn, canonical)
+                        rejected += 1
     log.info(
         "nutrition.llm_verify_complete",
         suspect_count=len(suspects),
         rejected=rejected,
         re_looked_up=re_looked_up,
     )
-    return nutrition_by_canonical
 
 
 def _lookup_with_fallback(
@@ -834,63 +869,34 @@ def enrich_nutrition(
     cooking_oils = {oil.strip().lower() for oil in settings.nutrition.cooking_oils}
     oil_absorption = Decimal(str(settings.nutrition.cooking_oil_absorption))
 
-    with eng.begin() as conn:
+    # Phase 0: read inputs (no write, short-lived connection).
+    with eng.connect() as conn:
         rows = fetch_enrichment_inputs(conn)
         unique_canonicals = sorted({str(r[1]) for r in rows if r[1]})
         sample_text = fetch_sample_raw_text(conn)
+        cached_canonicals = {c for c in unique_canonicals if fetch_cache(conn, c) is not None}
 
-        nutrition_by_canonical: dict[str, NutritionResult] = {}
-        cached_canonicals: set[str] = set()
-        for canonical in unique_canonicals:
-            cached = fetch_cache(conn, canonical)
-            if cached is not None:
-                nutrition_by_canonical[canonical] = _from_cached(cached)
-                cached_canonicals.add(canonical)
+    # Phase 1: Claude primary — commits per batch so an interrupt keeps work.
+    pending = [c for c in unique_canonicals if c not in cached_canonicals]
+    if settings.nutrition.llm_macros_primary and pending:
+        llm_client = get_llm_client(settings.llm)
+        if not isinstance(llm_client, NullLLM):
+            log.info("nutrition.claude_primary_start", to_query=len(pending))
+            newly_cached = _resolve_claude_macros_committed(
+                eng,
+                llm_client,
+                pending,
+                sample_text,
+                settings.nutrition.llm_macros_batch_size,
+                settings.nutrition.llm_macros_min_confidence,
+            )
+            pending = [c for c in pending if c not in newly_cached]
 
-        if settings.nutrition.llm_macros_primary:
-            llm_client = get_llm_client(settings.llm)
-            if not isinstance(llm_client, NullLLM):
-                pending = [c for c in unique_canonicals if c not in cached_canonicals]
-                log.info("nutrition.claude_primary_start", to_query=len(pending))
-                claude_macros = _fetch_claude_macros(
-                    llm_client,
-                    pending,
-                    sample_text,
-                    settings.nutrition.llm_macros_batch_size,
-                )
-                min_conf = settings.nutrition.llm_macros_min_confidence
-                accepted = 0
-                for canonical, macros in claude_macros.items():
-                    if not _confidence_meets(macros.confidence, min_conf):
-                        continue
-                    if macros.kcal_per_100g is None:
-                        continue
-                    claude_result = _macros_to_result(macros)
-                    nutrition_by_canonical[canonical] = claude_result
-                    upsert_cache(
-                        conn,
-                        ingredient_canonical=canonical,
-                        kcal_per_100g=claude_result.kcal_per_100g,
-                        fiber_g_per_100g=claude_result.fiber_g_per_100g,
-                        protein_g_per_100g=claude_result.protein_g_per_100g,
-                        fat_g_per_100g=claude_result.fat_g_per_100g,
-                        carbs_g_per_100g=claude_result.carbs_g_per_100g,
-                        source=claude_result.source,
-                        match_score=claude_result.match_score,
-                        match_source_name=claude_result.match_source_name,
-                    )
-                    accepted += 1
-                log.info(
-                    "nutrition.claude_primary_complete",
-                    queried=len(pending),
-                    returned=len(claude_macros),
-                    accepted=accepted,
-                )
-
-        for canonical in unique_canonicals:
-            if canonical in nutrition_by_canonical:
-                continue
-            result = lookup_nutrition(
+    # Phase 2: OFF/CoFID/USDA fallback for anything still uncached — one
+    # committed transaction per ingredient so partial progress survives.
+    for canonical in pending:
+        with eng.begin() as conn:
+            lookup_nutrition(
                 conn,
                 canonical,
                 cofid,
@@ -901,10 +907,18 @@ def enrich_nutrition(
                 off_countries=off_countries,
                 off_lc=off_lc,
             )
-            if result is not None:
-                nutrition_by_canonical[canonical] = result
 
-        nutrition_by_canonical = _verify_and_correct(conn, settings, nutrition_by_canonical, cofid)
+    # Phase 3: LLM verify — reads suspects from the committed cache and
+    # commits each batch's corrections immediately.
+    _verify_and_correct_committed(eng, settings, unique_canonicals, cofid)
+
+    # Phase 4: aggregate per-recipe nutrition from the now-committed cache.
+    with eng.begin() as conn:
+        nutrition_by_canonical: dict[str, NutritionResult] = {}
+        for canonical in unique_canonicals:
+            cached = fetch_cache(conn, canonical)
+            if cached is not None:
+                nutrition_by_canonical[canonical] = _from_cached(cached)
 
         recipes: dict[int, dict[str, Decimal]] = {}
         servings_map: dict[int, Decimal] = {}
