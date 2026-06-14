@@ -73,6 +73,7 @@ class IngredientLine:
     source: str | None
     sub_recipe_id: int | None = None
     sub_recipe_title: str | None = None
+    portion_estimated: bool = False
 
 
 @dataclass(frozen=True)
@@ -209,7 +210,7 @@ def _load_ingredient_breakdown(
                        c.kcal_per_100g, c.protein_g_per_100g, c.fiber_g_per_100g,
                        c.fat_g_per_100g, c.carbs_g_per_100g,
                        c.match_source_name, c.match_score, c.source,
-                       ri.sub_recipe_id, sub.title
+                       ri.sub_recipe_id, sub.title, ri.portion_estimated
                 FROM meal_planning.recipe_ingredient ri
                 LEFT JOIN meal_planning.ingredient_nutrition_cache c
                        ON c.ingredient_canonical = ri.ingredient_canonical
@@ -229,6 +230,7 @@ def _load_ingredient_breakdown(
         grams = float(row[3]) if row[3] is not None else None
         sub_recipe_id = int(row[12]) if row[12] is not None else None
         sub_recipe_title = str(row[13]) if row[13] is not None else None
+        portion_estimated = bool(row[14])
         if sub_recipe_id is not None and grams is not None and sub_recipe_id in sub_per_gram:
             kcal_pg, protein_pg, fiber_pg, fat_pg, carbs_pg = sub_per_gram[sub_recipe_id]
             line = IngredientLine(
@@ -245,6 +247,7 @@ def _load_ingredient_breakdown(
                 source="sub_recipe",
                 sub_recipe_id=sub_recipe_id,
                 sub_recipe_title=sub_recipe_title,
+                portion_estimated=portion_estimated,
             )
         else:
             kcal_per_100g = _f(row[4])
@@ -267,6 +270,7 @@ def _load_ingredient_breakdown(
                 source=str(row[11]) if row[11] is not None else None,
                 sub_recipe_id=sub_recipe_id,
                 sub_recipe_title=sub_recipe_title,
+                portion_estimated=portion_estimated,
             )
         result.setdefault(recipe_id, []).append(line)
     return result

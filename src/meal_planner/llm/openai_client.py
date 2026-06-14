@@ -14,6 +14,7 @@ from meal_planner.llm.base import (
     NutritionMatchVerdict,
     NutritionQuery,
     ParsedLine,
+    PortionEstimate,
 )
 
 
@@ -72,6 +73,9 @@ class OpenAILLM:
 
     def fetch_nutrition_macros(self, queries: Sequence[NutritionQuery]) -> list[NutritionMacros]:
         # Direct-macros is implemented in the Anthropic client only for now.
+        return []
+
+    def estimate_portions(self, queries: Sequence[NutritionQuery]) -> list[PortionEstimate]:
         return []
 
 

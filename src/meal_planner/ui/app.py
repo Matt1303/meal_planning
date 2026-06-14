@@ -137,6 +137,8 @@ def _render_ingredient_table(ingredients: list[IngredientLine], meal_kcal: float
     flagged: list[str] = []
     for ing in ingredients:
         grams_disp = f"{ing.per_serving_grams:.0f}" if ing.per_serving_grams is not None else "—"
+        if ing.portion_estimated and ing.per_serving_grams is not None:
+            grams_disp += "*"  # estimated default portion (no quantity in recipe)
         match_text = ing.match_source_name or "—"
         if (
             ing.match_score is not None
@@ -171,6 +173,8 @@ def _render_ingredient_table(ingredients: list[IngredientLine], meal_kcal: float
             }
         )
     st.dataframe(rows, hide_index=True, use_container_width=True)
+    if any(ing.portion_estimated and ing.per_serving_grams is not None for ing in ingredients):
+        st.caption("\\* estimated default portion — the recipe gave no quantity.")
     ingredient_kcal_sum = sum(ing.kcal for ing in ingredients)
     if meal_kcal > 0:
         delta = ingredient_kcal_sum - meal_kcal

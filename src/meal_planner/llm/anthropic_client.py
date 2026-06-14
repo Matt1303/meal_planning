@@ -14,6 +14,7 @@ from meal_planner.llm.base import (
     NutritionMatchVerdict,
     NutritionQuery,
     ParsedLine,
+    PortionEstimate,
 )
 
 
@@ -168,9 +169,55 @@ class AnthropicLLM:
         raw = _extract_text(resp.content)
         return _parse_macros(raw, queries)
 
+    def estimate_portions(self, queries: Sequence[NutritionQuery]) -> list[PortionEstimate]:
+        if not queries:
+            return []
+        system_prompt = (
+            "You estimate a typical single-portion weight in grams for a recipe "
+            "ingredient that was given without a quantity. Use realistic serving "
+            "sizes as the food is eaten: cooked grains/pasta ~180-250 g, a portion "
+            "of vegetables ~80-150 g, cheese ~30 g, crisps/nuts ~30 g, herbs ~5 g, "
+            "oils/condiments a drizzle ~5-15 g. For section headers or non-foods "
+            "(e.g. 'For the salad', 'ALFREDO SAUCE') return grams_per_portion null.\n"
+            "Reply with ONLY a JSON array of objects: "
+            "{ingredient_canonical, grams_per_portion (number or null), note (optional)}."
+        )
+        items = [
+            {"ingredient_canonical": q.ingredient_canonical, "sample_raw_text": q.sample_raw_text}
+            for q in queries
+        ]
+        user_prompt = "Estimate a per-portion gram weight for each:\n" + json.dumps(items, indent=2)
+        resp = self._client.messages.create(
+            model=self._model,
+            max_tokens=4096,
+            temperature=0,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+        return _parse_portions(_extract_text(resp.content), queries)
+
 
 _VERDICT_ADAPTER = TypeAdapter(list[NutritionMatchVerdict])
 _MACROS_ADAPTER = TypeAdapter(list[NutritionMacros])
+_PORTION_ADAPTER = TypeAdapter(list[PortionEstimate])
+
+
+def _parse_portions(text: str, queries: Sequence[NutritionQuery]) -> list[PortionEstimate]:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.strip("`")
+        if cleaned.lower().startswith("json"):
+            cleaned = cleaned[4:].lstrip()
+    try:
+        loaded = json.loads(cleaned)
+    except (json.JSONDecodeError, ValueError):
+        return []
+    try:
+        items = _PORTION_ADAPTER.validate_python(loaded)
+    except ValidationError:
+        return []
+    known = {q.ingredient_canonical for q in queries}
+    return [item for item in items if item.ingredient_canonical in known]
 
 
 def _parse_macros(text: str, queries: Sequence[NutritionQuery]) -> list[NutritionMacros]:

@@ -319,6 +319,25 @@ class ParseContext:
     fuzzy_min_score: float
     llm_threshold: float
     group_names: list[str]
+    default_portions: dict[str, Decimal]
+
+
+def _load_default_portions(path: Path) -> dict[str, Decimal]:
+    if not path.exists():
+        return {}
+    import csv as _csv
+
+    out: dict[str, Decimal] = {}
+    with path.open(newline="") as fh:
+        for row in _csv.DictReader(fh):
+            canonical = (row.get("ingredient_canonical") or "").strip().lower()
+            grams = (row.get("grams_per_portion") or "").strip()
+            if canonical and grams:
+                try:
+                    out[canonical] = Decimal(grams)
+                except (InvalidOperation, ArithmeticError, ValueError):
+                    continue
+    return out
 
 
 def build_context(
@@ -340,6 +359,7 @@ def build_context(
         fuzzy_min_score=settings.parse.fuzzy_min_score,
         llm_threshold=settings.parse.llm_threshold,
         group_names=sorted(set(food_groups.values())),
+        default_portions=_load_default_portions(settings.parse.default_portion_grams_path),
     )
 
 
@@ -571,6 +591,9 @@ def parse_ingredients(settings: Settings, *, engine: Engine | None = None) -> in
         resolved_subs = resolve_sub_recipes(conn)
         log.info("parse.sub_recipes_resolved", resolved=resolved_subs)
 
+        default_portions = apply_default_portions(conn, ctx)
+        log.info("parse.default_portions_applied", applied=default_portions)
+
         record_metric(conn, MetricName.PARSE_TOTAL, total, correlation_id=correlation_id)
         record_metric(conn, MetricName.PARSE_CACHED, cached_count, correlation_id=correlation_id)
         record_metric(conn, MetricName.PARSE_LLM_USED, llm_used, correlation_id=correlation_id)
@@ -666,6 +689,50 @@ def _build_update(
         portions=portions,
         portion_met=met,
     )
+
+
+def apply_default_portions(conn: Connection, ctx: ParseContext) -> int:
+    """Fill a per-portion default for manually-added ingredients that have a
+    resolved canonical but no quantity (e.g. "rice" -> 250 g cooked). Returns
+    the number of rows updated. Sets portion_estimated so the UI can flag them."""
+    if not ctx.default_portions:
+        return 0
+    rows = conn.execute(
+        text(
+            """
+            SELECT recipe_id, raw_text, ingredient_canonical, food_group
+            FROM meal_planning.recipe_ingredient
+            WHERE ingredient_canonical IS NOT NULL
+              AND per_serving_grams IS NULL
+              AND sub_recipe_id IS NULL
+            """
+        )
+    ).fetchall()
+    updated = 0
+    for recipe_id, raw_text, canonical, food_group in rows:
+        default = ctx.default_portions.get(str(canonical).strip().lower())
+        if default is None:
+            continue
+        portions, met = _portions(default, food_group, ctx.portion_sizes)
+        conn.execute(
+            text(
+                """
+                UPDATE meal_planning.recipe_ingredient
+                SET per_serving_grams = :pg, quantity_grams = COALESCE(quantity_grams, :pg),
+                    portions = :portions, portion_met = :met, portion_estimated = TRUE
+                WHERE recipe_id = :rid AND raw_text = :raw
+                """
+            ),
+            {
+                "pg": default,
+                "portions": portions,
+                "met": met,
+                "rid": int(recipe_id),
+                "raw": str(raw_text),
+            },
+        )
+        updated += 1
+    return updated
 
 
 def _run_llm_batches(

@@ -50,6 +50,12 @@ class NutritionQuery(BaseModel):
     sample_raw_text: str
 
 
+class PortionEstimate(BaseModel):
+    ingredient_canonical: str
+    grams_per_portion: float | None = None
+    note: str | None = None
+
+
 class NutritionMacros(BaseModel):
     ingredient_canonical: str
     kcal_per_100g: float | None = None
@@ -72,6 +78,8 @@ class LLMClient(Protocol):
         self, queries: Sequence[NutritionQuery]
     ) -> list[NutritionMacros]: ...
 
+    def estimate_portions(self, queries: Sequence[NutritionQuery]) -> list[PortionEstimate]: ...
+
 
 class NullLLM:
     def parse_lines(self, lines: Sequence[str], food_groups: Sequence[str]) -> LLMResponse:
@@ -83,4 +91,7 @@ class NullLLM:
         return []
 
     def fetch_nutrition_macros(self, queries: Sequence[NutritionQuery]) -> list[NutritionMacros]:
+        return []
+
+    def estimate_portions(self, queries: Sequence[NutritionQuery]) -> list[PortionEstimate]:
         return []

@@ -94,6 +94,7 @@ class RecipeIngredient(Base):
     food_group: Mapped[str | None] = mapped_column(Text)
     portions: Mapped[Decimal | None] = mapped_column(Numeric)
     portion_met: Mapped[bool | None] = mapped_column(Boolean)
+    portion_estimated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     sub_recipe_id: Mapped[int | None] = mapped_column(
         Integer,
         ForeignKey(f"{SCHEMA}.recipe.recipe_id", ondelete="SET NULL"),
