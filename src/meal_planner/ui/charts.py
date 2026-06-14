@@ -419,13 +419,15 @@ def daily_dozen_heatmap(view: PlanView) -> go.Figure:
             y=groups,
             z=z,
             customdata=custom,
+            # Colorscale positions are normalised to [0, 1] over zmin..zmax
+            # (here 0..1.5): red (gap) -> amber (partial) -> green at target.
             colorscale=[
-                (0.0, "#c0392b"),
-                (0.49, "#e67e22"),
-                (0.5, "#f1c40f"),
-                (0.99, "#f1c40f"),
-                (1.0, "#27ae60"),
-                (1.5, "#27ae60"),
+                [0.0, "#c0392b"],
+                [0.33, "#e67e22"],
+                [0.34, "#f1c40f"],
+                [0.66, "#f1c40f"],
+                [0.67, "#27ae60"],
+                [1.0, "#27ae60"],
             ],
             zmin=0,
             zmax=1.5,
