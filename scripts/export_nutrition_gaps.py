@@ -144,12 +144,15 @@ def export_low_confidence(conn: object) -> int:
         text(
             """
             WITH usage AS (
-                SELECT ingredient_canonical,
-                       count(DISTINCT recipe_id) AS recipe_count,
-                       min(raw_text) AS sample_raw_text
-                FROM meal_planning.recipe_ingredient
-                WHERE ingredient_canonical IS NOT NULL AND sub_recipe_id IS NULL
-                GROUP BY ingredient_canonical
+                SELECT ri.ingredient_canonical,
+                       count(DISTINCT ri.recipe_id) AS recipe_count,
+                       min(ri.raw_text) AS sample_raw_text
+                FROM meal_planning.recipe_ingredient ri
+                JOIN meal_planning.recipe r ON r.recipe_id = ri.recipe_id
+                WHERE ri.ingredient_canonical IS NOT NULL
+                  AND ri.sub_recipe_id IS NULL
+                  AND r.is_plant_based = TRUE
+                GROUP BY ri.ingredient_canonical
             )
             SELECT c.ingredient_canonical, u.sample_raw_text, u.recipe_count,
                    c.source, c.match_source_name, c.match_score,
@@ -176,9 +179,13 @@ def export_low_confidence(conn: object) -> int:
                 "current_source",
                 "current_match",
                 "match_score",
+                # the query returns all five current macros (kcal/protein/fiber/
+                # fat/carbs) — every column must be named or values shift.
                 "current_kcal_per_100g",
                 "current_protein_g_per_100g",
                 "current_fiber_g_per_100g",
+                "current_fat_g_per_100g",
+                "current_carbs_g_per_100g",
                 "corrected_kcal_per_100g",  # fill only to override
                 "corrected_protein_g_per_100g",
                 "corrected_fiber_g_per_100g",
