@@ -9,13 +9,21 @@ _RANGE = re.compile(
 )
 _DOZEN = re.compile(r"(?P<n>\d+(?:\.\d+)?)\s*dozen", re.IGNORECASE)
 _NUMBER = re.compile(r"(?P<n>\d+(?:\.\d+)?)")
+# A number immediately followed by a weight/volume unit is a yield
+# ("Makes about 500ml"), not a serving count — strip it before parsing.
+_YIELD = re.compile(
+    r"\d+(?:\.\d+)?\s*"
+    r"(?:ml|cl|l|litre|litres|liter|liters|g|kg|gram|grams|gramme|grammes|"
+    r"oz|ounce|ounces|lb|lbs|pound|pounds)\b",
+    re.IGNORECASE,
+)
 
 
 def parse_servings_count(value: str | None) -> Decimal | None:
     if not value:
         return None
-    raw = value.strip().lower()
-    if not raw:
+    raw = _YIELD.sub(" ", value.strip().lower())
+    if not raw.strip():
         return None
 
     dozen = _DOZEN.search(raw)
