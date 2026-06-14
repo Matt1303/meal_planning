@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import cast
 
@@ -69,6 +69,54 @@ def _ordered_meal_types(view: PlanView) -> list[str]:
     ordered = [m for m in _MEAL_ORDER if m in present]
     ordered.extend(sorted(m for m in present if m not in ordered))
     return ordered
+
+
+# Daily Dozen category icons (emoji stand-ins for category images).
+DOZEN_ICONS: dict[str, str] = {
+    "Beans": "🫘",
+    "Berries": "🫐",
+    "Other Fruits": "🍎",
+    "Cruciferous Vegetables": "🥦",
+    "Greens": "🥬",
+    "Other Vegetables": "🥕",
+    "Flaxseeds or Linseeds": "🟤",
+    "Nuts and Seeds": "🥜",
+    "Herbs and Spices": "🌿",
+    "Whole Grains": "🌾",
+}
+_DOZEN_ORDER = list(DOZEN_ICONS)
+
+
+def _week_commencing(d: date) -> str:
+    monday = d - timedelta(days=d.weekday())
+    return monday.strftime("w/c %d %b %Y")
+
+
+def _render_dozen_strip(daily_dozen: dict[str, tuple[int, int, float]]) -> None:
+    if not daily_dozen:
+        return
+    chips: list[str] = []
+    for group in _DOZEN_ORDER:
+        triple = daily_dozen.get(group)
+        if triple is None:
+            continue
+        count, target, _portions = triple
+        icon = DOZEN_ICONS.get(group, "•")
+        if target > 0 and count >= target:
+            color = "#1a7f37"  # met — green
+        elif count > 0:
+            color = "#bf8700"  # partial — amber
+        else:
+            color = "#9aa0a6"  # missed — grey
+        chips.append(
+            f"<span title='{group}' style='display:inline-block;margin:0 12px 4px 0;"
+            f"white-space:nowrap;color:{color};font-size:0.95em'>"
+            f"{icon} {count}/{target}</span>"
+        )
+    st.markdown(
+        "<div style='line-height:1.9'>" + "".join(chips) + "</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def _stars(rating: float | None) -> str:
@@ -205,7 +253,14 @@ def _render_profile_day(
             heading += (
                 f"  \n<span style='color:#666;font-size:0.85em'>{_format_macro(entry)}</span>"
             )
-            if entry.last_eaten is not None:
+            if meal_type in ("lunch", "dinner"):
+                last = (
+                    f"Last scheduled: {_week_commencing(entry.last_eaten)}"
+                    if entry.last_eaten is not None
+                    else "Not previously scheduled"
+                )
+                heading += f"  \n<span style='color:#888;font-size:0.8em'>{last}</span>"
+            elif entry.last_eaten is not None:
                 heading += (
                     f"  \n<span style='color:#888;font-size:0.8em'>"
                     f"Last planned: {entry.last_eaten.isoformat()}</span>"
@@ -217,12 +272,17 @@ def _render_profile_day(
             _meal_detail_popover(entry, day_user, recipe_ings)
 
         st.divider()
-        cols = st.columns(5)
-        cols[0].metric("Calories", f"{day_user.day_kcal:.0f} kcal")
-        cols[1].metric("Protein", f"{day_user.day_protein_g:.0f} g")
-        cols[2].metric("Fibre", f"{day_user.day_fiber_g:.0f} g")
-        cols[3].metric("Fat", f"{day_user.day_fat_g:.0f} g")
-        cols[4].metric("Carbs", f"{day_user.day_carbs_g:.0f} g")
+        # Compact single line so values are never cut off in side-by-side cards.
+        st.markdown(
+            "<div style='font-size:0.95em;line-height:1.7'>"
+            f"<b>{day_user.day_kcal:.0f}</b> kcal &nbsp;·&nbsp; "
+            f"<b>{day_user.day_protein_g:.0f}</b> g protein &nbsp;·&nbsp; "
+            f"<b>{day_user.day_fiber_g:.0f}</b> g fibre &nbsp;·&nbsp; "
+            f"<b>{day_user.day_fat_g:.0f}</b> g fat &nbsp;·&nbsp; "
+            f"<b>{day_user.day_carbs_g:.0f}</b> g carbs"
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
 
 def _render_day(
@@ -231,6 +291,12 @@ def _render_day(
     ingredients_by_recipe: dict[int, list[IngredientLine]],
 ) -> None:
     st.subheader(f"Day {day.day}")
+    if day.per_profile:
+        # Daily Dozen is computed per household-day; show it once above the cards.
+        st.markdown(
+            "<span style='color:#666;font-size:0.85em'>Daily Dozen</span>", unsafe_allow_html=True
+        )
+        _render_dozen_strip(day.per_profile[0].daily_dozen)
     if len(day.per_profile) == 1:
         _render_profile_day(day.per_profile[0], meal_types, ingredients_by_recipe)
         return
@@ -479,10 +545,15 @@ def render() -> None:
                 st.error(f"Plan failed: {exc}")
 
     selected_id = cast(int | None, st.session_state.get("last_plan_run_id"))
+    dozen_targets = dict(settings.daily_dozen_targets)
     if selected_id is None:
-        view = load_latest_plan_view(settings.optimizer, settings.household)
+        view = load_latest_plan_view(
+            settings.optimizer, settings.household, daily_dozen_targets=dozen_targets
+        )
     else:
-        view = load_plan_view(selected_id, settings.optimizer, settings.household)
+        view = load_plan_view(
+            selected_id, settings.optimizer, settings.household, daily_dozen_targets=dozen_targets
+        )
 
     if view is None:
         st.info("No plan run yet — set parameters in the sidebar and click **Generate plan**.")

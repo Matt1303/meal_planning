@@ -300,8 +300,10 @@ def load_plan_view(
     opt: OptimizerSettings,
     household: HouseholdSettings,
     *,
+    daily_dozen_targets: dict[str, int] | None = None,
     engine: Engine | None = None,
 ) -> PlanView | None:
+    targets_map = daily_dozen_targets or {}
     eng = engine or get_engine()
     with eng.connect() as conn:
         run_row = conn.execute(
@@ -401,7 +403,7 @@ def load_plan_view(
         day_int = int(row[0])
         groups_by_day.setdefault(day_int, {})[str(row[1])] = (
             int(row[2] or 0),
-            int(opt.model_dump().get("daily_dozen_targets", {}).get(str(row[1]), 0)),
+            int(targets_map.get(str(row[1]), 0)),
             _f(row[3]),
         )
 
@@ -480,6 +482,7 @@ def load_latest_plan_view(
     opt: OptimizerSettings,
     household: HouseholdSettings,
     *,
+    daily_dozen_targets: dict[str, int] | None = None,
     engine: Engine | None = None,
 ) -> PlanView | None:
     eng = engine or get_engine()
@@ -489,4 +492,6 @@ def load_latest_plan_view(
         ).fetchone()
     if row is None:
         return None
-    return load_plan_view(int(row[0]), opt, household, engine=eng)
+    return load_plan_view(
+        int(row[0]), opt, household, daily_dozen_targets=daily_dozen_targets, engine=eng
+    )
