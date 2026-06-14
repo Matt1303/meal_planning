@@ -79,19 +79,20 @@ def export_missing(conn: object) -> int:
                     ri.ingredient_canonical,
                     count(DISTINCT ri.recipe_id) AS recipe_count,
                     bool_or(ri.per_serving_grams IS NOT NULL) AS has_grams,
+                    bool_or(r.is_plant_based) AS in_plant,
+                    bool_or(NOT r.is_plant_based) AS in_non_plant,
                     min(ri.raw_text) AS sample_raw_text
                 FROM meal_planning.recipe_ingredient ri
                 JOIN meal_planning.recipe r ON r.recipe_id = ri.recipe_id
                 WHERE ri.ingredient_canonical IS NOT NULL
                   AND ri.sub_recipe_id IS NULL
-                  AND r.is_plant_based = TRUE
                   AND ri.raw_text !~* :noise
                   AND ri.raw_text NOT ILIKE '%(separate recipe%'
                   AND ri.raw_text NOT ILIKE '%(see recipe%'
                 GROUP BY ri.ingredient_canonical
             )
             SELECT a.ingredient_canonical, a.sample_raw_text, a.recipe_count,
-                   a.has_grams, c.kcal_per_100g
+                   a.has_grams, a.in_plant, a.in_non_plant, c.kcal_per_100g
             FROM agg a
             LEFT JOIN meal_planning.ingredient_nutrition_cache c
                    ON c.ingredient_canonical = a.ingredient_canonical
@@ -114,6 +115,7 @@ def export_missing(conn: object) -> int:
                 "ingredient_canonical",
                 "sample_raw_text",
                 "recipe_count",
+                "recipe_types",  # plant / non-plant / both
                 "issue",
                 "grams_per_piece",  # fill if the line is count-based (e.g. "4 tortillas")
                 "kcal_per_100g",
@@ -124,7 +126,7 @@ def export_missing(conn: object) -> int:
             ]
         )
         written = 0
-        for canonical, sample, recipe_count, has_grams, kcal in rows:
+        for canonical, sample, recipe_count, has_grams, in_plant, in_non_plant, kcal in rows:
             if canonical in _TRIVIAL_CANONICALS:
                 continue
             has_nutrition = kcal is not None and kcal != 0
@@ -134,7 +136,12 @@ def export_missing(conn: object) -> int:
                 issue = "no nutrition match"
             else:
                 issue = "no grams parsed"
-            w.writerow([canonical, sample, recipe_count, issue, "", "", "", "", "", ""])
+            recipe_types = (
+                "both" if in_plant and in_non_plant else "plant" if in_plant else "non-plant"
+            )
+            w.writerow(
+                [canonical, sample, recipe_count, recipe_types, issue, "", "", "", "", "", ""]
+            )
             written += 1
     return written
 
@@ -146,15 +153,18 @@ def export_low_confidence(conn: object) -> int:
             WITH usage AS (
                 SELECT ri.ingredient_canonical,
                        count(DISTINCT ri.recipe_id) AS recipe_count,
+                       bool_or(r.is_plant_based) AS in_plant,
+                       bool_or(NOT r.is_plant_based) AS in_non_plant,
                        min(ri.raw_text) AS sample_raw_text
                 FROM meal_planning.recipe_ingredient ri
                 JOIN meal_planning.recipe r ON r.recipe_id = ri.recipe_id
                 WHERE ri.ingredient_canonical IS NOT NULL
                   AND ri.sub_recipe_id IS NULL
-                  AND r.is_plant_based = TRUE
                 GROUP BY ri.ingredient_canonical
             )
             SELECT c.ingredient_canonical, u.sample_raw_text, u.recipe_count,
+                   CASE WHEN u.in_plant AND u.in_non_plant THEN 'both'
+                        WHEN u.in_plant THEN 'plant' ELSE 'non-plant' END AS recipe_types,
                    c.source, c.match_source_name, c.match_score,
                    c.kcal_per_100g, c.protein_g_per_100g, c.fiber_g_per_100g,
                    c.fat_g_per_100g, c.carbs_g_per_100g
@@ -176,6 +186,7 @@ def export_low_confidence(conn: object) -> int:
                 "ingredient_canonical",
                 "sample_raw_text",
                 "recipe_count",
+                "recipe_types",  # plant / non-plant / both
                 "current_source",
                 "current_match",
                 "match_score",
