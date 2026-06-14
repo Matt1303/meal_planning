@@ -105,6 +105,28 @@ _UNIT_TOKENS: frozenset[str] = frozenset(
         "handful",
         "pinch",
         "dash",
+        # container / packaging words that aren't part of the ingredient name
+        "can",
+        "cans",
+        "tin",
+        "tins",
+        "tinned",
+        "jar",
+        "jars",
+        "packet",
+        "packets",
+        "pack",
+        "packs",
+        "tub",
+        "tubs",
+        "carton",
+        "cartons",
+        "bottle",
+        "bottles",
+        "box",
+        "boxes",
+        "bag",
+        "bags",
     }
 )
 
@@ -210,6 +232,17 @@ _SIZE_ADJECTIVE = re.compile(
     r"(?P<num>\d|½|¼|¾|⅓|⅔)\s+(?:large|medium|small|big|extra[- ]large|jumbo|mini)\s+",
     re.IGNORECASE,
 )
+
+
+# A spaced slash separates two alternative ingredients ("coconut milk /
+# coconut cream"); an unspaced slash is a dual-unit quantity ("1 cup/250ml")
+# or an alias ("chilli/hot pepper"), which must be left intact.
+_ALT_SLASH = re.compile(r"\s+/\s+")
+
+
+def _primary_clause(raw: str) -> str:
+    """For an "A / B" alternative-ingredient line, parse only the first (A)."""
+    return _ALT_SLASH.split(raw, 1)[0].strip() or raw
 
 
 def _preprocess_fraction_words(text: str) -> str:
@@ -571,9 +604,10 @@ def _from_cache_or_compute(
             quantity_grams=cache.quantity_grams,
             food_group=cache.food_group,
         )
-    qty_value, qty_unit = _quantulum_then_regex(raw_text, quantulum_errors)
-    ingredient_name = strip_quantity(raw_text) or raw_text
-    canonical, food_group = _resolve_canonical(raw_text, ingredient_name, ctx)
+    parse_text = _primary_clause(raw_text)
+    qty_value, qty_unit = _quantulum_then_regex(parse_text, quantulum_errors)
+    ingredient_name = strip_quantity(parse_text) or parse_text
+    canonical, food_group = _resolve_canonical(parse_text, ingredient_name, ctx)
     grams = ctx.units.to_grams(qty_value, qty_unit, canonical)
     return _BaseFields(
         ingredient_name=ingredient_name,

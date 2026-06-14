@@ -6,10 +6,27 @@ import pytest
 
 from meal_planner.parse import (
     _preprocess_fraction_words,
+    _primary_clause,
     normalize_text,
     regex_parse_quantity,
     strip_quantity,
 )
+
+
+@pytest.mark.unit
+def test_primary_clause_splits_spaced_slash() -> None:
+    assert (
+        _primary_clause("400 ml can full-fat coconut milk / 160ml coconut cream")
+        == "400 ml can full-fat coconut milk"
+    )
+
+
+@pytest.mark.unit
+def test_primary_clause_keeps_dual_unit_and_alias() -> None:
+    # unspaced slash is a dual-unit quantity or an alias — leave intact
+    assert _primary_clause("1 cup/250ml vegetable broth") == "1 cup/250ml vegetable broth"
+    assert _primary_clause("½ tsp chilli/hot pepper flakes") == "½ tsp chilli/hot pepper flakes"
+    assert _primary_clause("300 g/10 oz brussels sprouts") == "300 g/10 oz brussels sprouts"
 
 
 @pytest.mark.unit
