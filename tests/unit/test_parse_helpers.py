@@ -7,10 +7,31 @@ import pytest
 from meal_planner.parse import (
     _preprocess_fraction_words,
     _primary_clause,
+    _quantulum_then_regex,
+    _strip_containers,
     normalize_text,
     regex_parse_quantity,
     strip_quantity,
 )
+
+
+@pytest.mark.unit
+def test_strip_containers() -> None:
+    assert _strip_containers("400 gram can black beans").split() == [
+        "400",
+        "gram",
+        "black",
+        "beans",
+    ]
+    assert "tin" not in _strip_containers("1 tin chopped tomatoes")
+
+
+@pytest.mark.unit
+def test_canned_quantity_parses_after_container_strip() -> None:
+    # "One 400 gram can black beans": leading "One" + "can" both broke quantulum
+    qty, unit = _quantulum_then_regex(_strip_containers("One 400 gram can black beans"), [0])
+    assert qty == Decimal("400")
+    assert unit in {"gram", "g", "grams"}
 
 
 @pytest.mark.unit

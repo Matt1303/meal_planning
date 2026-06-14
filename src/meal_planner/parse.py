@@ -233,6 +233,22 @@ _SIZE_ADJECTIVE = re.compile(
     re.IGNORECASE,
 )
 
+# A leading "One / A / An" before a number is a redundant container count
+# ("One 400 gram can black beans" = a 400 g can) that confuses quantulum.
+_REDUNDANT_LEADING_ONE = re.compile(r"^\s*(?:one|a|an)\s+(?=\d)", re.IGNORECASE)
+
+# Container/packaging words sitting between a quantity and the food
+# ("400 gram can black beans") break quantulum's unit parsing; strip them
+# before extracting the quantity.
+_CONTAINER_WORDS = re.compile(
+    r"\b(?:cans?|tins?|tinned|jars?|packets?|packs?|tubs?|cartons?|bottles?|boxe?s?|bags?)\b",
+    re.IGNORECASE,
+)
+
+
+def _strip_containers(text: str) -> str:
+    return _CONTAINER_WORDS.sub(" ", text)
+
 
 # A spaced slash separates two alternative ingredients ("coconut milk /
 # coconut cream"); an unspaced slash is a dual-unit quantity ("1 cup/250ml")
@@ -252,6 +268,9 @@ def _preprocess_fraction_words(text: str) -> str:
         return f"{value} " if value else match.group(0)
 
     out = _FRACTION_PREFIX.sub(_replace, text)
+    # Drop a redundant leading container count ("One 400 gram can ..." ->
+    # "400 gram can ...") so quantulum reads the real quantity.
+    out = _REDUNDANT_LEADING_ONE.sub("", out)
     # Drop a size adjective sitting between a count and the food ("1 large
     # onion" -> "1 onion") so quantulum reads the count and the piece fallback
     # can size it.
@@ -605,7 +624,7 @@ def _from_cache_or_compute(
             food_group=cache.food_group,
         )
     parse_text = _primary_clause(raw_text)
-    qty_value, qty_unit = _quantulum_then_regex(parse_text, quantulum_errors)
+    qty_value, qty_unit = _quantulum_then_regex(_strip_containers(parse_text), quantulum_errors)
     ingredient_name = strip_quantity(parse_text) or parse_text
     canonical, food_group = _resolve_canonical(parse_text, ingredient_name, ctx)
     grams = ctx.units.to_grams(qty_value, qty_unit, canonical)
