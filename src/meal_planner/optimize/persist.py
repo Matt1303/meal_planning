@@ -23,6 +23,7 @@ from meal_planner.db.plan_repo import (
 from meal_planner.db.profile_repo import upsert_profile
 from meal_planner.logging import get_logger
 from meal_planner.metrics import MetricName
+from meal_planner.optimize.data import per_person_nutrition_deltas
 from meal_planner.optimize.run import SHARED_KEY, OptimizeResult
 
 log = get_logger(__name__)
@@ -115,6 +116,9 @@ def write_plan(settings: Settings, result: OptimizeResult, *, engine: Engine | N
         targets = settings.daily_dozen_targets
         prepared = result.prepared
         profile_names = [p.name for p in prepared.profiles]
+        # Per-person serving overrides (e.g. rice 400 g Matt / 200 g Ellie) so the
+        # stored per-person macros match what the solver optimised against.
+        nutrition_deltas = per_person_nutrition_deltas(conn, settings)
 
         household_total_kcal = Decimal(0)
         household_total_fiber = Decimal(0)
@@ -159,8 +163,11 @@ def write_plan(settings: Settings, result: OptimizeResult, *, engine: Engine | N
                 totals = [Decimal(0)] * 5
                 for r in per_profile_recipes[profile_name]:
                     macros = _macros(nutrition, r)
+                    delta = nutrition_deltas.get((r, profile_name))
                     for i, v in enumerate(macros):
                         totals[i] += v
+                        if delta is not None:
+                            totals[i] += Decimal(str(delta[i]))
                 insert_plan_day_profile(
                     conn,
                     plan_run_id=plan_run_id,

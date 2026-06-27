@@ -87,6 +87,17 @@ optimizer:
   fiber_weekly_min: null
   weekly_group_portions_min: {}
   include_non_plant: false
+  # Per-person serving sizes that override the shared per-serving amount for
+  # rice. Matt eats 400 g cooked rice per meal, Ellie 200 g. Only applies to
+  # no-quantity ("to serve") rice lines (estimated_only); recipe-specified rice
+  # weights are left as-is. value_as values these cooked-weight portions with
+  # cooked-rice calories (the dry rice canonicals would over-count ~2.7x).
+  per_person_portions:
+    - canonicals:
+        [rice, white rice, brown rice, wholegrain rice, basmati rice, jasmine rice, sushi rice]
+      value_as: cooked rice
+      estimated_only: true
+      grams: {matt: 400, ellie: 200}
 
 household:
   # When non-empty, the optimiser solves for the listed profiles jointly:

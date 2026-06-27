@@ -270,11 +270,16 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
 
     if options.enforce_daily_kcal:
         kcal = prepared.kcal
+        kcal_delta = prepared.kcal_delta
 
         def cal_min_rule(m: Any, p: str, d: int) -> Any:
             profile = profiles_by_name[p]
             return (
-                sum(kcal[r] * _user_recipes_on_day(m, profile, r, d, prepared) for r in m.R)
+                sum(
+                    (kcal[r] + kcal_delta.get((r, p), 0.0))
+                    * _user_recipes_on_day(m, profile, r, d, prepared)
+                    for r in m.R
+                )
                 + m.slack_cal_min[p, d]
                 >= profile.calories_daily_min
             )
@@ -287,7 +292,11 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
         def cal_max_rule(m: Any, p: str, d: int) -> Any:
             profile = profiles_by_name[p]
             return (
-                sum(kcal[r] * _user_recipes_on_day(m, profile, r, d, prepared) for r in m.R)
+                sum(
+                    (kcal[r] + kcal_delta.get((r, p), 0.0))
+                    * _user_recipes_on_day(m, profile, r, d, prepared)
+                    for r in m.R
+                )
                 - m.slack_cal_max[p, d]
                 <= profile.calories_daily_max
             )
@@ -299,11 +308,16 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
 
     if options.enforce_daily_fiber:
         fiber = prepared.fiber
+        fiber_delta = prepared.fiber_delta
 
         def fiber_min_rule(m: Any, p: str, d: int) -> Any:
             profile = profiles_by_name[p]
             return (
-                sum(fiber[r] * _user_recipes_on_day(m, profile, r, d, prepared) for r in m.R)
+                sum(
+                    (fiber[r] + fiber_delta.get((r, p), 0.0))
+                    * _user_recipes_on_day(m, profile, r, d, prepared)
+                    for r in m.R
+                )
                 + m.slack_fiber_min[p, d]
                 >= profile.fiber_daily_min
             )
@@ -315,11 +329,16 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
 
     if options.enforce_daily_protein:
         protein = prepared.protein
+        protein_delta = prepared.protein_delta
 
         def protein_min_rule(m: Any, p: str, d: int) -> Any:
             profile = profiles_by_name[p]
             return (
-                sum(protein[r] * _user_recipes_on_day(m, profile, r, d, prepared) for r in m.R)
+                sum(
+                    (protein[r] + protein_delta.get((r, p), 0.0))
+                    * _user_recipes_on_day(m, profile, r, d, prepared)
+                    for r in m.R
+                )
                 + m.slack_protein_min[p, d]
                 >= profile.protein_daily_min
             )
@@ -334,7 +353,11 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
         def protein_max_rule(m: Any, p: str, d: int) -> Any:
             profile = profiles_by_name[p]
             return (
-                sum(protein[r] * _user_recipes_on_day(m, profile, r, d, prepared) for r in m.R)
+                sum(
+                    (protein[r] + protein_delta.get((r, p), 0.0))
+                    * _user_recipes_on_day(m, profile, r, d, prepared)
+                    for r in m.R
+                )
                 - m.slack_protein_max[p, d]
                 <= profile.protein_daily_max
             )
@@ -348,11 +371,13 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
 
     if options.enforce_weekly_kcal and opt.calories_weekly_min is not None:
         kcal_w = prepared.kcal
+        kcal_w_delta = prepared.kcal_delta
         cal_min_target = opt.calories_weekly_min * len(prepared.profiles)
 
         def weekly_cal_min(m: Any) -> Any:
             total = sum(
-                kcal_w[r] * _user_recipes_on_day(m, p, r, d, prepared)
+                (kcal_w[r] + kcal_w_delta.get((r, p.name), 0.0))
+                * _user_recipes_on_day(m, p, r, d, prepared)
                 for p in prepared.profiles
                 for r in m.R
                 for d in m.D
@@ -363,11 +388,13 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
 
     if options.enforce_weekly_kcal and opt.calories_weekly_max is not None:
         kcal_wm = prepared.kcal
+        kcal_wm_delta = prepared.kcal_delta
         cal_max_target = opt.calories_weekly_max * len(prepared.profiles)
 
         def weekly_cal_max(m: Any) -> Any:
             total = sum(
-                kcal_wm[r] * _user_recipes_on_day(m, p, r, d, prepared)
+                (kcal_wm[r] + kcal_wm_delta.get((r, p.name), 0.0))
+                * _user_recipes_on_day(m, p, r, d, prepared)
                 for p in prepared.profiles
                 for r in m.R
                 for d in m.D
@@ -378,11 +405,13 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
 
     if options.enforce_weekly_fiber and opt.fiber_weekly_min is not None:
         fiber_w = prepared.fiber
+        fiber_w_delta = prepared.fiber_delta
         fiber_target = opt.fiber_weekly_min * len(prepared.profiles)
 
         def weekly_fiber_min(m: Any) -> Any:
             total = sum(
-                fiber_w[r] * _user_recipes_on_day(m, p, r, d, prepared)
+                (fiber_w[r] + fiber_w_delta.get((r, p.name), 0.0))
+                * _user_recipes_on_day(m, p, r, d, prepared)
                 for p in prepared.profiles
                 for r in m.R
                 for d in m.D
@@ -393,11 +422,13 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
 
     if options.enforce_weekly_protein and opt.protein_weekly_min is not None:
         protein_w = prepared.protein
+        protein_w_delta = prepared.protein_delta
         protein_target = opt.protein_weekly_min * len(prepared.profiles)
 
         def weekly_protein_min(m: Any) -> Any:
             total = sum(
-                protein_w[r] * _user_recipes_on_day(m, p, r, d, prepared)
+                (protein_w[r] + protein_w_delta.get((r, p.name), 0.0))
+                * _user_recipes_on_day(m, p, r, d, prepared)
                 for p in prepared.profiles
                 for r in m.R
                 for d in m.D

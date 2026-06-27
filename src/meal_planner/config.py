@@ -84,6 +84,22 @@ class NutritionSettings(BaseModel):
     llm_macros_min_confidence: str = Field(default="medium", pattern="^(high|medium|low)$")
 
 
+class PerPersonPortion(BaseModel):
+    """A per-person serving-size override for a set of ingredient canonicals.
+
+    grams maps profile name -> grams the person eats per serving. value_as names
+    the canonical whose cached per-100g values to nutritionally value the portion
+    with (e.g. "cooked rice" for cooked-weight rice defaults that resolve to dry
+    rice canonicals). estimated_only restricts the override to no-quantity
+    (default-portion) lines, leaving recipe-specified amounts untouched.
+    """
+
+    canonicals: list[str]
+    grams: dict[str, float]
+    value_as: str | None = None
+    estimated_only: bool = True
+
+
 class OptimizerSettings(BaseModel):
     min_rating: float = Field(default=3, ge=0, le=5)
     rating_weight: float = 1.0
@@ -116,6 +132,10 @@ class OptimizerSettings(BaseModel):
     spacing_penalty_by_gap: dict[int, float] = Field(
         default_factory=lambda: {1: 1.0, 2: 0.3, 3: 0.1}
     )
+    # Per-person serving sizes that override the shared per-serving amount for
+    # specific ingredients in the solver and per-person macros (e.g. rice 400 g
+    # Matt / 200 g Ellie). See PerPersonPortion.
+    per_person_portions: list[PerPersonPortion] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _validate_ranges(self) -> OptimizerSettings:

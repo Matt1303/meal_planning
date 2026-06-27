@@ -15,7 +15,13 @@ from meal_planner.db import get_engine
 from meal_planner.db.metrics_repo import record_metric
 from meal_planner.logging import get_logger
 from meal_planner.metrics import MetricName
-from meal_planner.optimize.data import PreparedData, filter_recipes, load_inputs, prepare
+from meal_planner.optimize.data import (
+    PreparedData,
+    filter_recipes,
+    load_inputs,
+    per_person_nutrition_deltas,
+    prepare,
+)
 from meal_planner.optimize.model import ModelOptions, build_model, total_slack, variable_count
 
 log = get_logger(__name__)
@@ -115,7 +121,8 @@ def optimize_plan(settings: Settings, *, engine: Engine | None = None) -> Optimi
     filtered = filter_recipes(inputs, min_rating=settings.optimizer.min_rating, settings=settings)
     if filtered.recipes.empty:
         raise RuntimeError("no recipes meet filtering criteria")
-    prepared = prepare(filtered, settings)
+    nutrition_deltas = per_person_nutrition_deltas(eng, settings)
+    prepared = prepare(filtered, settings, nutrition_deltas)
     if not prepared.recipes:
         raise RuntimeError("no recipes left after preparation")
 
