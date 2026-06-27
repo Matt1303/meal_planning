@@ -225,6 +225,12 @@ def _render_profile_day(
     with st.container(border=True):
         st.markdown(f"**{day_user.display_name}**")
         shortfall_shown = False
+        filled_snacks = sum(
+            1
+            for m in day_user.meals
+            if (m.meal_type == "snack" or m.meal_type.startswith("snack_")) and m.title is not None
+        )
+        snack_index = 0
         for meal_type in meal_types:
             is_snack = meal_type == "snack" or meal_type.startswith("snack_")
             entries = [m for m in day_user.meals if m.meal_type == meal_type]
@@ -250,6 +256,12 @@ def _render_profile_day(
                 else:
                     st.write(f"**{label}**: _(none)_")
                 continue
+
+            if is_snack:
+                # Number snacks by how many are actually filled, not by slot index
+                # (so a lone snack in slot 2 reads "Snack", not "Snack 2").
+                snack_index += 1
+                label = "Snack" if filled_snacks <= 1 else f"Snack {snack_index}"
 
             heading = f"**{label}**: {entry.title}"
             if entry.rating is not None:
