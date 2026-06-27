@@ -1,5 +1,10 @@
 raw_text,ingredient_canonical,food_group,note
 Instant Oats 80g,instant oats,Whole Grains,Matt's daily breakfast oats — distinct from jumbo/rolled oats
-Vegan Protein Powder 50g,vegan protein supplement,,Protein powder is not a Daily Dozen group; own canonical (the generic "vegan protein powder" is polluted)
+Vegan Protein Powder 50g,vegan protein supplement,,Protein powder is not a Daily Dozen group; own canonical (the generic "vegan protein powder" was polluted)
 Almond milk unsweetened 350ml,almond milk,,Plant milk is not a Daily Dozen group (was mislabelled Whole Grains)
 Frozen Berries 90g,mixed berries,Berries,Was missing its Daily Dozen group
+1 teaspoon baking powder,baking powder,,Was mis-matched to vegan protein powder + Whole Grains
+1 tbsp Vegan Butter,vegan butter,,Was mis-matched to vegan protein powder + Whole Grains
+80 g Vegan Kimchi,kimchi,Other Vegetables,Was mis-matched to vegan protein powder + Whole Grains
+2 tbsp Vegan Kimchi,kimchi,Other Vegetables,Was mis-matched to vegan protein powder + Whole Grains
+3 tbsp Vegan Yoghurt,vegan yoghurt,,Was mis-matched to vegan protein powder + Whole Grains
