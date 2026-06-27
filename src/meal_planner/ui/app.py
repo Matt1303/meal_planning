@@ -92,6 +92,10 @@ def _week_commencing(d: date) -> str:
     return monday.strftime("w/c %d %b %Y")
 
 
+def _fmt_servings(value: float) -> str:
+    return f"{value:.0f}" if abs(value - round(value)) < 0.05 else f"{value:.1f}"
+
+
 def _render_dozen_strip(daily_dozen: dict[str, tuple[int, int, float]]) -> None:
     if not daily_dozen:
         return
@@ -100,23 +104,33 @@ def _render_dozen_strip(daily_dozen: dict[str, tuple[int, int, float]]) -> None:
         triple = daily_dozen.get(group)
         if triple is None:
             continue
-        count, target, _portions = triple
+        _count, target, portions = triple
         icon = DOZEN_ICONS.get(group, "•")
-        if target > 0 and count >= target:
+        if target > 0 and portions >= target - 1e-9:
             color = "#1a7f37"  # met — green
-        elif count > 0:
+        elif portions > 0:
             color = "#bf8700"  # partial — amber
         else:
             color = "#9aa0a6"  # missed — grey
+        tooltip = f"{group}: {_fmt_servings(portions)} of {target} servings today"
         chips.append(
-            f"<span title='{group}' style='display:inline-block;margin:0 12px 4px 0;"
+            f"<span title='{tooltip}' style='display:inline-block;margin:0 12px 4px 0;"
             f"white-space:nowrap;color:{color};font-size:0.95em'>"
-            f"{icon} {count}/{target}</span>"
+            f"{icon} {_fmt_servings(portions)}/{target}</span>"
         )
     st.markdown(
         "<div style='line-height:1.9'>" + "".join(chips) + "</div>",
         unsafe_allow_html=True,
     )
+
+
+def _meal_dozen_line(dozen: dict[str, float]) -> str:
+    parts = [
+        f"{DOZEN_ICONS.get(group, '•')} {_fmt_servings(dozen[group])}"
+        for group in _DOZEN_ORDER
+        if dozen.get(group, 0.0) >= 0.05
+    ]
+    return " · ".join(parts)
 
 
 def _stars(rating: float | None) -> str:
@@ -224,6 +238,7 @@ def _render_profile_day(
 ) -> None:
     with st.container(border=True):
         st.markdown(f"**{day_user.display_name}**")
+        _render_dozen_strip(day_user.daily_dozen)
         shortfall_shown = False
         filled_snacks = sum(
             1
@@ -269,6 +284,9 @@ def _render_profile_day(
             heading += (
                 f"  \n<span style='color:#666;font-size:0.85em'>{_format_macro(entry)}</span>"
             )
+            dozen_line = _meal_dozen_line(entry.dozen)
+            if dozen_line:
+                heading += f"  \n<span style='font-size:0.9em'>{dozen_line}</span>"
             if meal_type in ("lunch", "dinner"):
                 last = (
                     f"Last scheduled: {_week_commencing(entry.last_eaten)}"
@@ -286,6 +304,18 @@ def _render_profile_day(
                 ingredients_by_recipe.get(entry.recipe_id) if entry.recipe_id is not None else None
             )
             _meal_detail_popover(entry, day_user, recipe_ings)
+
+        for entry in (m for m in day_user.meals if m.is_topup):
+            heading = f"**Top-up**: {entry.title}"
+            heading += (
+                f"  \n<span style='color:#666;font-size:0.85em'>{_format_macro(entry)}</span>"
+            )
+            dozen_line = _meal_dozen_line(entry.dozen)
+            if dozen_line:
+                heading += f"  \n<span style='font-size:0.9em'>{dozen_line}</span>"
+            if entry.detail:
+                heading += f"  \n<span style='color:#888;font-size:0.8em'>{entry.detail}</span>"
+            st.markdown(heading, unsafe_allow_html=True)
 
         st.divider()
         # Compact single line so values are never cut off in side-by-side cards.
@@ -307,12 +337,6 @@ def _render_day(
     ingredients_by_recipe: dict[int, list[IngredientLine]],
 ) -> None:
     st.subheader(f"Day {day.day}")
-    if day.per_profile:
-        # Daily Dozen is computed per household-day; show it once above the cards.
-        st.markdown(
-            "<span style='color:#666;font-size:0.85em'>Daily Dozen</span>", unsafe_allow_html=True
-        )
-        _render_dozen_strip(day.per_profile[0].daily_dozen)
     if len(day.per_profile) == 1:
         _render_profile_day(day.per_profile[0], meal_types, ingredients_by_recipe)
         return
@@ -564,11 +588,18 @@ def render() -> None:
     dozen_targets = dict(settings.daily_dozen_targets)
     if selected_id is None:
         view = load_latest_plan_view(
-            settings.optimizer, settings.household, daily_dozen_targets=dozen_targets
+            settings.optimizer,
+            settings.household,
+            daily_dozen_targets=dozen_targets,
+            settings=settings,
         )
     else:
         view = load_plan_view(
-            selected_id, settings.optimizer, settings.household, daily_dozen_targets=dozen_targets
+            selected_id,
+            settings.optimizer,
+            settings.household,
+            daily_dozen_targets=dozen_targets,
+            settings=settings,
         )
 
     if view is None:

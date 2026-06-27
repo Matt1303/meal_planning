@@ -1,13 +1,25 @@
 from __future__ import annotations
 
+import dataclasses
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
+from math import ceil
 
 from sqlalchemy import Engine, text
 
-from meal_planner.config import HouseholdSettings, OptimizerSettings, ProfileTargets
+from meal_planner.config import (
+    HouseholdSettings,
+    OptimizerSettings,
+    PerPersonPortion,
+    ProfileTargets,
+    Settings,
+    TopUpFruit,
+    TopUpSettings,
+)
 from meal_planner.db import get_engine
+from meal_planner.optimize.data import per_person_nutrition_deltas
 
 
 @dataclass(frozen=True)
@@ -22,6 +34,10 @@ class MealEntry:
     carbs_g: float
     rating: float | None = None
     last_eaten: date | None = None
+    # Daily Dozen servings this meal contributes, keyed by category.
+    dozen: dict[str, float] = field(default_factory=dict)
+    is_topup: bool = False
+    detail: str | None = None
 
 
 @dataclass(frozen=True)
@@ -299,12 +315,156 @@ def _load_last_eaten(engine: Engine, recipe_ids: list[int], before: date | None)
     return {int(r[0]): r[1] for r in rows if r[1] is not None}
 
 
+def _load_recipe_dozen_rows(
+    engine: Engine, recipe_ids: list[int], groups: set[str]
+) -> dict[int, list[tuple[str, str | None, float, float | None, bool]]]:
+    """Per recipe, the Daily Dozen lines: (food_group, canonical, portions,
+    per_serving_grams, portion_estimated)."""
+    if not recipe_ids or not groups:
+        return {}
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT recipe_id, food_group, ingredient_canonical, portions,
+                       per_serving_grams, portion_estimated
+                FROM meal_planning.recipe_ingredient
+                WHERE recipe_id = ANY(:ids) AND food_group = ANY(:groups)
+                  AND portions IS NOT NULL AND sub_recipe_id IS NULL
+                """
+            ),
+            {"ids": recipe_ids, "groups": list(groups)},
+        ).fetchall()
+    out: dict[int, list[tuple[str, str | None, float, float | None, bool]]] = defaultdict(list)
+    for r in rows:
+        out[int(r[0])].append(
+            (
+                str(r[1]),
+                str(r[2]) if r[2] is not None else None,
+                _f(r[3]),
+                float(r[4]) if r[4] is not None else None,
+                bool(r[5]),
+            )
+        )
+    return out
+
+
+def _override_grams(
+    canonical: str | None, estimated: bool, profile_name: str, specs: list[PerPersonPortion]
+) -> float | None:
+    if canonical is None:
+        return None
+    key = canonical.strip().lower()
+    for spec in specs:
+        if spec.estimated_only and not estimated:
+            continue
+        if key in {c.strip().lower() for c in spec.canonicals} and profile_name in spec.grams:
+            return spec.grams[profile_name]
+    return None
+
+
+def _meal_dozen(
+    rows: list[tuple[str, str | None, float, float | None, bool]],
+    profile_name: str,
+    specs: list[PerPersonPortion],
+    portion_sizes: dict[str, float],
+) -> dict[str, float]:
+    """Daily Dozen servings a recipe contributes for a profile, applying any
+    per-person serving override (e.g. Matt's larger rice portion)."""
+    out: dict[str, float] = defaultdict(float)
+    for group, canonical, portions, grams, estimated in rows:
+        serving = portions
+        override = _override_grams(canonical, estimated, profile_name, specs)
+        size = portion_sizes.get(group, 0.0)
+        if override is not None and size > 0:
+            serving = override / size
+        out[group] += serving
+    return dict(out)
+
+
+def _build_topups(
+    topup: TopUpSettings,
+    day_protein: float,
+    protein_min: float | None,
+    day_dozen: dict[str, float],
+    dozen_targets: dict[str, int],
+    portion_sizes: dict[str, float],
+) -> list[MealEntry]:
+    """Guaranteed gap-fillers: whey scoops for a protein shortfall, fruit for
+    short fruit Daily Dozen categories. Each returned MealEntry carries its own
+    macros and dozen contribution."""
+    entries: list[MealEntry] = []
+    if not topup.enabled:
+        return entries
+
+    if protein_min is not None and day_protein < protein_min and topup.whey_protein_g > 0:
+        gap = protein_min - day_protein
+        scoops = min(topup.max_whey_scoops, ceil(gap / topup.whey_protein_g))
+        if scoops > 0:
+            entries.append(
+                MealEntry(
+                    meal_type="topup",
+                    title=f"{topup.whey_label} ×{scoops}",
+                    recipe_id=None,
+                    kcal=scoops * topup.whey_kcal,
+                    fiber_g=scoops * topup.whey_fiber_g,
+                    protein_g=scoops * topup.whey_protein_g,
+                    fat_g=scoops * topup.whey_fat_g,
+                    carbs_g=scoops * topup.whey_carbs_g,
+                    is_topup=True,
+                    detail=(
+                        f"{scoops} × {topup.whey_scoop_grams:.0f} g scoop with water "
+                        f"(+{scoops * topup.whey_protein_g:.0f} g protein)"
+                    ),
+                )
+            )
+
+    fruits_by_group: dict[str, list[TopUpFruit]] = defaultdict(list)
+    for fruit in topup.fruits:
+        fruits_by_group[fruit.food_group].append(fruit)
+    for group, target in dozen_targets.items():
+        options = fruits_by_group.get(group)
+        size = portion_sizes.get(group, 0.0)
+        if not options or size <= 0:
+            continue
+        have = day_dozen.get(group, 0.0)
+        added: Counter[int] = Counter()
+        guard = 0
+        idx = 0
+        while have < target - 1e-9 and guard < 30:
+            fruit = options[idx % len(options)]
+            added[idx % len(options)] += 1
+            have += fruit.grams / size
+            idx += 1
+            guard += 1
+        for opt_idx, count in added.items():
+            fruit = options[opt_idx]
+            serving = count * fruit.grams / size
+            entries.append(
+                MealEntry(
+                    meal_type="topup",
+                    title=f"{fruit.emoji} {fruit.name} ×{count}",
+                    recipe_id=None,
+                    kcal=count * fruit.kcal,
+                    fiber_g=count * fruit.fiber_g,
+                    protein_g=count * fruit.protein_g,
+                    fat_g=count * fruit.fat_g,
+                    carbs_g=count * fruit.carbs_g,
+                    is_topup=True,
+                    detail=f"{count} × {fruit.grams:.0f} g — bridges {group}",
+                    dozen={group: serving},
+                )
+            )
+    return entries
+
+
 def load_plan_view(
     plan_run_id: int,
     opt: OptimizerSettings,
     household: HouseholdSettings,
     *,
     daily_dozen_targets: dict[str, int] | None = None,
+    settings: Settings | None = None,
     engine: Engine | None = None,
 ) -> PlanView | None:
     targets_map = daily_dozen_targets or {}
@@ -353,22 +513,17 @@ def load_plan_view(
             {"pr": plan_run_id},
         ).fetchall()
 
-        group_rows = conn.execute(
-            text(
-                """
-                SELECT day, food_group, daily_count, daily_portions
-                FROM meal_planning.plan_day_group WHERE plan_run_id = :pr
-                ORDER BY day, food_group
-                """
-            ),
-            {"pr": plan_run_id},
-        ).fetchall()
-
     profile_lookup = _load_profile_records(eng, plan_run_id)
 
     recipe_ids = sorted({int(row[3]) for row in meal_rows if row[3] is not None})
     rating_by_recipe = _load_recipe_ratings(eng, recipe_ids)
     ingredients_by_recipe = _load_ingredient_breakdown(eng, recipe_ids)
+
+    specs = settings.optimizer.per_person_portions if settings is not None else []
+    portion_sizes = dict(settings.portion_sizes) if settings is not None else {}
+    topup_cfg = settings.topup if settings is not None else TopUpSettings(enabled=False)
+    nutrition_deltas = per_person_nutrition_deltas(eng, settings) if settings is not None else {}
+    recipe_dozen = _load_recipe_dozen_rows(eng, recipe_ids, set(targets_map))
     run_date: date | None = None
     if run_row[1] is not None:
         candidate = run_row[1]
@@ -402,15 +557,6 @@ def load_plan_view(
 
     targets_by_name: dict[str, ProfileTargets] = {p.name: p for p in household.profiles}
 
-    groups_by_day: dict[int, dict[str, tuple[int, int, float]]] = {}
-    for row in group_rows:
-        day_int = int(row[0])
-        groups_by_day.setdefault(day_int, {})[str(row[1])] = (
-            int(row[2] or 0),
-            int(targets_map.get(str(row[1]), 0)),
-            _f(row[3]),
-        )
-
     profile_id_to_name: dict[int, str] = {}
     profile_id_to_display: dict[int, str] = {}
     for row in day_profile_rows:
@@ -426,13 +572,31 @@ def load_plan_view(
         profile_id_to_name = {0: "default"}
         profile_id_to_display = {0: "Default"}
 
-    profile_totals: dict[tuple[int, int], tuple[float, float, float, float, float]] = {
-        (int(row[0]), int(row[1])): (_f(row[4]), _f(row[5]), _f(row[6]), _f(row[7]), _f(row[8]))
-        for row in day_profile_rows
-    }
-
     days_set = sorted({row[0] for row in meal_rows} | {row[0] for row in day_profile_rows})
     days_int = [int(d) for d in days_set]
+
+    def _enrich(meal: MealEntry, profile_name: str) -> MealEntry:
+        dozen = (
+            _meal_dozen(recipe_dozen.get(meal.recipe_id, []), profile_name, specs, portion_sizes)
+            if meal.recipe_id is not None
+            else {}
+        )
+        delta = (
+            nutrition_deltas.get((meal.recipe_id, profile_name))
+            if meal.recipe_id is not None
+            else None
+        )
+        if delta is None:
+            return dataclasses.replace(meal, dozen=dozen)
+        return dataclasses.replace(
+            meal,
+            kcal=meal.kcal + delta[0],
+            fiber_g=meal.fiber_g + delta[1],
+            protein_g=meal.protein_g + delta[2],
+            fat_g=meal.fat_g + delta[3],
+            carbs_g=meal.carbs_g + delta[4],
+            dozen=dozen,
+        )
 
     plan_days: list[DayPlan] = []
     for day_int in days_int:
@@ -441,30 +605,51 @@ def load_plan_view(
         for profile_id, name in profile_id_to_name.items():
             display = profile_id_to_display.get(profile_id, name)
             user_meals = list(meals_by_day_profile.get((day_int, profile_id), []))
-            combined = list(shared) + user_meals
-            totals = profile_totals.get(
-                (day_int, profile_id),
-                (
-                    sum(m.kcal for m in combined),
-                    sum(m.fiber_g for m in combined),
-                    sum(m.protein_g for m in combined),
-                    sum(m.fat_g for m in combined),
-                    sum(m.carbs_g for m in combined),
-                ),
-            )
+            combined = [_enrich(m, name) for m in (list(shared) + user_meals)]
+
+            day_dozen: dict[str, float] = defaultdict(float)
+            for m in combined:
+                for group, serving in m.dozen.items():
+                    day_dozen[group] += serving
+
             targets = _targets_for(opt, targets_by_name.get(name))
-            gaps = compute_gaps(totals[0], totals[1], totals[2], targets)
+            base_protein = sum(m.protein_g for m in combined)
+            protein_min = (
+                float(targets.protein_daily_min) if targets.protein_daily_min is not None else None
+            )
+            topups = _build_topups(
+                topup_cfg, base_protein, protein_min, dict(day_dozen), targets_map, portion_sizes
+            )
+            combined += topups
+            for m in topups:
+                for group, serving in m.dozen.items():
+                    day_dozen[group] += serving
+
+            day_kcal = sum(m.kcal for m in combined)
+            day_fiber = sum(m.fiber_g for m in combined)
+            day_protein = sum(m.protein_g for m in combined)
+            day_fat = sum(m.fat_g for m in combined)
+            day_carbs = sum(m.carbs_g for m in combined)
+            daily_dozen = {
+                group: (
+                    int(day_dozen.get(group, 0.0)),
+                    int(targets_map.get(group, 0)),
+                    day_dozen.get(group, 0.0),
+                )
+                for group in targets_map
+            }
+            gaps = compute_gaps(day_kcal, day_fiber, day_protein, targets)
             per_profile.append(
                 DayPlanForProfile(
                     profile_name=name,
                     display_name=display,
                     meals=combined,
-                    day_kcal=totals[0],
-                    day_fiber_g=totals[1],
-                    day_protein_g=totals[2],
-                    day_fat_g=totals[3],
-                    day_carbs_g=totals[4],
-                    daily_dozen=groups_by_day.get(day_int, {}),
+                    day_kcal=day_kcal,
+                    day_fiber_g=day_fiber,
+                    day_protein_g=day_protein,
+                    day_fat_g=day_fat,
+                    day_carbs_g=day_carbs,
+                    daily_dozen=daily_dozen,
                     gaps=gaps,
                 )
             )
@@ -487,6 +672,7 @@ def load_latest_plan_view(
     household: HouseholdSettings,
     *,
     daily_dozen_targets: dict[str, int] | None = None,
+    settings: Settings | None = None,
     engine: Engine | None = None,
 ) -> PlanView | None:
     eng = engine or get_engine()
@@ -497,5 +683,10 @@ def load_latest_plan_view(
     if row is None:
         return None
     return load_plan_view(
-        int(row[0]), opt, household, daily_dozen_targets=daily_dozen_targets, engine=eng
+        int(row[0]),
+        opt,
+        household,
+        daily_dozen_targets=daily_dozen_targets,
+        settings=settings,
+        engine=eng,
     )

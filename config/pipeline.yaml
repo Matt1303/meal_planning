@@ -49,6 +49,26 @@ daily_dozen_targets:
   Herbs and Spices: 1
   Whole Grains: 3
 
+# Post-solve gap-fillers shown as guaranteed "Top-up" snacks when a person's
+# day falls short. Whey is taken with water only (no other ingredients). Each
+# fruit counts as grams/portion_size servings toward its Daily Dozen category.
+topup:
+  enabled: true
+  whey_label: "Whey protein shake (water)"
+  whey_scoop_grams: 30
+  whey_kcal: 114
+  whey_protein_g: 22
+  whey_fat_g: 1.8
+  whey_carbs_g: 2.7
+  whey_fiber_g: 0
+  max_whey_scoops: 6
+  fruits:
+    - {name: "Mixed berries", grams: 80, food_group: "Berries", emoji: "🫐", kcal: 40, protein_g: 0.6, fiber_g: 2.0, fat_g: 0.3, carbs_g: 9.0}
+    - {name: "Banana", grams: 120, food_group: "Other Fruits", emoji: "🍌", kcal: 107, protein_g: 1.3, fiber_g: 3.1, fat_g: 0.4, carbs_g: 27.0}
+    - {name: "Apple", grams: 150, food_group: "Other Fruits", emoji: "🍎", kcal: 78, protein_g: 0.6, fiber_g: 3.6, fat_g: 0.3, carbs_g: 21.0}
+    - {name: "Orange", grams: 130, food_group: "Other Fruits", emoji: "🍊", kcal: 62, protein_g: 1.2, fiber_g: 3.1, fat_g: 0.2, carbs_g: 16.0}
+    - {name: "Pear", grams: 150, food_group: "Other Fruits", emoji: "🍐", kcal: 85, protein_g: 0.7, fiber_g: 4.6, fat_g: 0.2, carbs_g: 23.0}
+
 nutrition:
   cofid_path: "data/cofid.xlsx"
   cofid_url: ""

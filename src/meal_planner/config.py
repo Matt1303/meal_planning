@@ -211,6 +211,38 @@ class HouseholdSettings(BaseModel):
         return self
 
 
+class TopUpFruit(BaseModel):
+    """A fruit serving used to bridge a daily fruit/fibre shortfall."""
+
+    name: str
+    grams: float
+    food_group: str
+    kcal: float
+    protein_g: float = 0.0
+    fiber_g: float = 0.0
+    fat_g: float = 0.0
+    carbs_g: float = 0.0
+    emoji: str = "🍎"
+
+
+class TopUpSettings(BaseModel):
+    """Post-solve gap-fillers: a whey shake for protein, fruit for the fruit
+    Daily Dozen categories. Shown as guaranteed 'Top-up' snacks on a day that
+    falls short, computed after the plan solves (not chosen by the optimiser)."""
+
+    enabled: bool = True
+    whey_label: str = "Whey protein shake (water)"
+    whey_emoji: str = "🥤"
+    whey_scoop_grams: float = 30.0
+    whey_kcal: float = 114.0
+    whey_protein_g: float = 22.0
+    whey_fat_g: float = 1.8
+    whey_carbs_g: float = 2.7
+    whey_fiber_g: float = 0.0
+    max_whey_scoops: int = 6
+    fruits: list[TopUpFruit] = Field(default_factory=list)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_nested_delimiter="__",
@@ -225,6 +257,7 @@ class Settings(BaseSettings):
     nutrition: NutritionSettings = Field(default_factory=NutritionSettings)
     optimizer: OptimizerSettings = Field(default_factory=OptimizerSettings)
     household: HouseholdSettings = Field(default_factory=HouseholdSettings)
+    topup: TopUpSettings = Field(default_factory=TopUpSettings)
     meal_types: list[str] = Field(default_factory=lambda: ["breakfast", "lunch", "dinner", "snack"])
     portion_sizes: dict[str, float] = Field(default_factory=dict)
     daily_dozen_targets: dict[str, int] = Field(default_factory=dict)
