@@ -45,10 +45,15 @@ class ParseSettings(BaseModel):
     piece_grams_path: Path = Path("config/piece_grams.csv")
     default_portion_grams_path: Path = Path("config/default_portion_grams.csv")
     non_plant_terms_path: Path = Path("config/non_plant_terms.yaml")
+    # Durable raw_text -> canonical/food_group overrides, seeded every parse run.
+    overrides_path: Path = Path("config/ingredient_overrides.csv")
 
 
 class NutritionSettings(BaseModel):
     cofid_path: Path | None = None
+    # Manual per-100g nutrition seeded every enrich run; authoritative (e.g. a
+    # product packet label), so it survives a cache wipe or full refresh.
+    overrides_path: Path = Path("config/nutrition_overrides.csv")
     cofid_url: str = ""
     usda_api_key: str = ""
     coverage_min_ratio: float = Field(default=0.6, ge=0, le=1)

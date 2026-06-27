@@ -19,6 +19,7 @@ from meal_planner.db.parse_repo import (
     fetch_cache,
     fetch_overrides,
     fetch_unparsed_rows,
+    upsert_override,
     write_parse_update,
 )
 from meal_planner.food_list import load_food_groups, load_synonyms
@@ -61,6 +62,29 @@ class ParseAttempt:
 
 def normalize_text(value: str) -> str:
     return re.sub(r"\s+", " ", value.strip().lower())
+
+
+def _seed_ingredient_overrides(conn: Connection, path: Path) -> int:
+    """Upsert durable raw_text -> canonical/food_group overrides from config and
+    clear any stale parse-cache rows so the override wins on the next parse."""
+    import csv
+
+    if not path.exists():
+        return 0
+    seeded = 0
+    for row in csv.DictReader(path.open(newline="")):
+        raw = (row.get("raw_text") or "").strip()
+        if not raw:
+            continue
+        canonical = (row.get("ingredient_canonical") or "").strip() or None
+        group = (row.get("food_group") or "").strip() or None
+        upsert_override(conn, raw_text=raw, canonical=canonical, food_group=group)
+        conn.execute(
+            text("DELETE FROM meal_planning.ingredient_parse_cache WHERE lower(raw_text) = :rt"),
+            {"rt": raw.lower()},
+        )
+        seeded += 1
+    return seeded
 
 
 _UNIT_TOKENS: frozenset[str] = frozenset(
@@ -544,6 +568,9 @@ def parse_ingredients(settings: Settings, *, engine: Engine | None = None) -> in
     llm_invalid = 0
 
     with eng.begin() as conn:
+        seeded = _seed_ingredient_overrides(conn, settings.parse.overrides_path)
+        if seeded:
+            log.info("parse.ingredient_overrides_seeded", count=seeded)
         overrides = fetch_overrides(conn)
         ctx = build_context(settings, overrides)
         rows = fetch_unparsed_rows(conn)

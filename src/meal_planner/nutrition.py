@@ -855,6 +855,45 @@ def _lookup_with_fallback(
     return result
 
 
+def _decimal_or_none_str(value: str) -> Decimal | None:
+    value = value.strip()
+    if not value:
+        return None
+    try:
+        return Decimal(value)
+    except (ArithmeticError, ValueError):
+        return None
+
+
+def apply_nutrition_overrides(conn: Connection, path: Path) -> int:
+    """Seed authoritative manual per-100g nutrition (e.g. packet labels) into the
+    cache so it wins over LLM/OFF lookups and survives a cache wipe / refresh."""
+    import csv
+
+    if not path.exists():
+        return 0
+    applied = 0
+    with path.open(newline="") as fh:
+        for row in csv.DictReader(fh):
+            canonical = (row.get("ingredient_canonical") or "").strip()
+            if not canonical:
+                continue
+            upsert_cache(
+                conn,
+                ingredient_canonical=canonical,
+                kcal_per_100g=_decimal_or_none_str(row.get("kcal_per_100g", "")),
+                fiber_g_per_100g=_decimal_or_none_str(row.get("fiber_g_per_100g", "")),
+                protein_g_per_100g=_decimal_or_none_str(row.get("protein_g_per_100g", "")),
+                fat_g_per_100g=_decimal_or_none_str(row.get("fat_g_per_100g", "")),
+                carbs_g_per_100g=_decimal_or_none_str(row.get("carbs_g_per_100g", "")),
+                source="manual",
+                match_score=Decimal(100),
+                match_source_name=(row.get("note") or "manual override").strip(),
+            )
+            applied += 1
+    return applied
+
+
 def enrich_nutrition(
     settings: Settings, *, engine: Engine | None = None, ignore_coverage: bool = False
 ) -> int:
@@ -869,6 +908,13 @@ def enrich_nutrition(
     off_lc = settings.nutrition.open_food_facts_lc
     cooking_oils = {oil.strip().lower() for oil in settings.nutrition.cooking_oils}
     oil_absorption = Decimal(str(settings.nutrition.cooking_oil_absorption))
+
+    # Phase 0a: seed manual nutrition overrides so they are cached and win over
+    # any LLM/OFF lookup (and survive a cache wipe).
+    with eng.begin() as conn:
+        manual = apply_nutrition_overrides(conn, settings.nutrition.overrides_path)
+    if manual:
+        log.info("nutrition.manual_overrides", count=manual)
 
     # Phase 0: read inputs (no write, short-lived connection).
     with eng.connect() as conn:
