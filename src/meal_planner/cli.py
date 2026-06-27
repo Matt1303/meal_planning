@@ -168,6 +168,8 @@ def ui(
         address,
         "--server.port",
         str(port),
+        "--server.headless",
+        "true",
     ]
     env = os.environ.copy()
     env.setdefault("PYTHONPATH", str(repo_root / "src"))

@@ -1,5 +1,8 @@
 .PHONY: help install lint format typecheck test test-unit test-integration migrate run paprika-refresh ui docker-up docker-down
 
+# Prefer the project venv's CLI so targets work without activating it; fall back to PATH.
+CLI := $(if $(wildcard .venv/bin/meal-planner),.venv/bin/meal-planner,meal-planner)
+
 help:
 	@echo "Available targets:"
 	@echo "  install          - install package + dev extras"
@@ -43,13 +46,13 @@ migrate:
 	alembic upgrade head
 
 run:
-	meal-planner run
+	@set -a; [ -f .env ] && . ./.env; set +a; DB_HOST=localhost $(CLI) run
 
 paprika-refresh:
 	./scripts/paprika_refresh.sh
 
 ui:
-	meal-planner ui
+	@set -a; [ -f .env ] && . ./.env; set +a; DB_HOST=localhost $(CLI) ui
 
 docker-up:
 	docker-compose --profile dev up -d postgres pgadmin
