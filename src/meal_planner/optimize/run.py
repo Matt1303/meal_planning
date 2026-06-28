@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Any, cast
 
@@ -19,7 +19,6 @@ from meal_planner.optimize.data import (
     PreparedData,
     filter_recipes,
     load_inputs,
-    per_person_nutrition_deltas,
     prepare,
 )
 from meal_planner.optimize.model import ModelOptions, build_model, total_slack, variable_count
@@ -108,6 +107,8 @@ class OptimizeResult:
     slack_total: float
     relaxation_level: int
     prepared: PreparedData
+    # (profile_name, day) -> whey scoops the solver allocated.
+    whey: dict[tuple[str, int], int] = field(default_factory=dict)
 
 
 SHARED_KEY = "__shared__"
@@ -122,8 +123,7 @@ def optimize_plan(settings: Settings, *, engine: Engine | None = None) -> Optimi
     filtered = filter_recipes(inputs, min_rating=settings.optimizer.min_rating, settings=settings)
     if filtered.recipes.empty:
         raise RuntimeError("no recipes meet filtering criteria")
-    nutrition_deltas = per_person_nutrition_deltas(eng, settings)
-    prepared = prepare(filtered, settings, nutrition_deltas)
+    prepared = prepare(filtered, settings)
     if not prepared.recipes:
         raise RuntimeError("no recipes left after preparation")
 
@@ -176,6 +176,7 @@ def optimize_plan(settings: Settings, *, engine: Engine | None = None) -> Optimi
         }
         if condition in accepted:
             plan = _extract_plan(model, prepared)
+            whey = _extract_whey(model, prepared)
             slack = total_slack(model, prepared)
             with eng.begin() as conn:
                 record_metric(
@@ -209,6 +210,7 @@ def optimize_plan(settings: Settings, *, engine: Engine | None = None) -> Optimi
                 slack_total=slack,
                 relaxation_level=int(level),
                 prepared=prepared,
+                whey=whey,
             )
         last_error = str(condition)
         log.warning("optimize.infeasible", level=level.name, condition=last_error)
@@ -236,6 +238,18 @@ def _maybe_force_snack_optional(
             update={"optimizer": settings.optimizer.model_copy(update={"snack_optional": True})}
         )
     return settings
+
+
+def _extract_whey(model: Any, prepared: PreparedData) -> dict[tuple[str, int], int]:
+    out: dict[tuple[str, int], int] = {}
+    if not hasattr(model, "whey"):
+        return out
+    for p in prepared.profiles:
+        for d in prepared.days:
+            value = cast(Any, model.whey[p.name, d]).value
+            if value is not None and value > 0.5:
+                out[(p.name, d)] = round(float(value))
+    return out
 
 
 def _extract_plan(model: Any, prepared: PreparedData) -> dict[int, dict[str, PlanCell]]:

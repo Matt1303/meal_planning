@@ -7,6 +7,7 @@ from pyomo.environ import (
     Binary,
     ConcreteModel,
     Constraint,
+    NonNegativeIntegers,
     NonNegativeReals,
     Objective,
     Set,
@@ -72,6 +73,17 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
         model.x_user = Var(model.P, model.R, model.D, model.USER_M, domain=Binary)
     model.z = Var(model.P, model.D, model.I, domain=Binary)
     model.y = Var(model.P, model.I, domain=Binary)
+
+    # Per-person whey scoops the solver may allocate to hit the protein floor
+    # within the calorie band (counts toward both protein and calories).
+    whey_enabled = settings.topup.enabled and bool(profile_names)
+    if whey_enabled:
+        model.whey = Var(
+            model.P,
+            model.D,
+            domain=NonNegativeIntegers,
+            bounds=(0, settings.topup.max_whey_scoops),
+        )
 
     model.slack_group = Var(model.P, model.D, model.G, domain=NonNegativeReals)
     model.slack_weekly_group = Var(model.P, model.G, domain=NonNegativeReals)
@@ -297,18 +309,20 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
 
         model.weekly_group_min = Constraint(model.P, model.G, rule=weekly_group_rule)
 
+    def _whey_kcal(m: Any, p: str, d: int) -> Any:
+        return m.whey[p, d] * settings.topup.whey_kcal if whey_enabled else 0
+
+    def _whey_protein(m: Any, p: str, d: int) -> Any:
+        return m.whey[p, d] * settings.topup.whey_protein_g if whey_enabled else 0
+
     if options.enforce_daily_kcal:
         kcal = prepared.kcal
-        kcal_delta = prepared.kcal_delta
 
         def cal_min_rule(m: Any, p: str, d: int) -> Any:
             profile = profiles_by_name[p]
             return (
-                sum(
-                    (kcal[r] + kcal_delta.get((r, p), 0.0))
-                    * _user_recipes_on_day(m, profile, r, d, prepared)
-                    for r in m.R
-                )
+                sum(kcal[r] * _user_recipes_on_day(m, profile, r, d, prepared) for r in m.R)
+                + _whey_kcal(m, p, d)
                 + m.slack_cal_min[p, d]
                 >= profile.calories_daily_min
             )
@@ -321,11 +335,8 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
         def cal_max_rule(m: Any, p: str, d: int) -> Any:
             profile = profiles_by_name[p]
             return (
-                sum(
-                    (kcal[r] + kcal_delta.get((r, p), 0.0))
-                    * _user_recipes_on_day(m, profile, r, d, prepared)
-                    for r in m.R
-                )
+                sum(kcal[r] * _user_recipes_on_day(m, profile, r, d, prepared) for r in m.R)
+                + _whey_kcal(m, p, d)
                 - m.slack_cal_max[p, d]
                 <= profile.calories_daily_max
             )
@@ -337,16 +348,11 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
 
     if options.enforce_daily_fiber:
         fiber = prepared.fiber
-        fiber_delta = prepared.fiber_delta
 
         def fiber_min_rule(m: Any, p: str, d: int) -> Any:
             profile = profiles_by_name[p]
             return (
-                sum(
-                    (fiber[r] + fiber_delta.get((r, p), 0.0))
-                    * _user_recipes_on_day(m, profile, r, d, prepared)
-                    for r in m.R
-                )
+                sum(fiber[r] * _user_recipes_on_day(m, profile, r, d, prepared) for r in m.R)
                 + m.slack_fiber_min[p, d]
                 >= profile.fiber_daily_min
             )
@@ -358,16 +364,12 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
 
     if options.enforce_daily_protein:
         protein = prepared.protein
-        protein_delta = prepared.protein_delta
 
         def protein_min_rule(m: Any, p: str, d: int) -> Any:
             profile = profiles_by_name[p]
             return (
-                sum(
-                    (protein[r] + protein_delta.get((r, p), 0.0))
-                    * _user_recipes_on_day(m, profile, r, d, prepared)
-                    for r in m.R
-                )
+                sum(protein[r] * _user_recipes_on_day(m, profile, r, d, prepared) for r in m.R)
+                + _whey_protein(m, p, d)
                 + m.slack_protein_min[p, d]
                 >= profile.protein_daily_min
             )
@@ -382,11 +384,8 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
         def protein_max_rule(m: Any, p: str, d: int) -> Any:
             profile = profiles_by_name[p]
             return (
-                sum(
-                    (protein[r] + protein_delta.get((r, p), 0.0))
-                    * _user_recipes_on_day(m, profile, r, d, prepared)
-                    for r in m.R
-                )
+                sum(protein[r] * _user_recipes_on_day(m, profile, r, d, prepared) for r in m.R)
+                + _whey_protein(m, p, d)
                 - m.slack_protein_max[p, d]
                 <= profile.protein_daily_max
             )
@@ -400,13 +399,11 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
 
     if options.enforce_weekly_kcal and opt.calories_weekly_min is not None:
         kcal_w = prepared.kcal
-        kcal_w_delta = prepared.kcal_delta
         cal_min_target = opt.calories_weekly_min * len(prepared.profiles)
 
         def weekly_cal_min(m: Any) -> Any:
             total = sum(
-                (kcal_w[r] + kcal_w_delta.get((r, p.name), 0.0))
-                * _user_recipes_on_day(m, p, r, d, prepared)
+                kcal_w[r] * _user_recipes_on_day(m, p, r, d, prepared)
                 for p in prepared.profiles
                 for r in m.R
                 for d in m.D
@@ -417,13 +414,11 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
 
     if options.enforce_weekly_kcal and opt.calories_weekly_max is not None:
         kcal_wm = prepared.kcal
-        kcal_wm_delta = prepared.kcal_delta
         cal_max_target = opt.calories_weekly_max * len(prepared.profiles)
 
         def weekly_cal_max(m: Any) -> Any:
             total = sum(
-                (kcal_wm[r] + kcal_wm_delta.get((r, p.name), 0.0))
-                * _user_recipes_on_day(m, p, r, d, prepared)
+                kcal_wm[r] * _user_recipes_on_day(m, p, r, d, prepared)
                 for p in prepared.profiles
                 for r in m.R
                 for d in m.D
@@ -434,13 +429,11 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
 
     if options.enforce_weekly_fiber and opt.fiber_weekly_min is not None:
         fiber_w = prepared.fiber
-        fiber_w_delta = prepared.fiber_delta
         fiber_target = opt.fiber_weekly_min * len(prepared.profiles)
 
         def weekly_fiber_min(m: Any) -> Any:
             total = sum(
-                (fiber_w[r] + fiber_w_delta.get((r, p.name), 0.0))
-                * _user_recipes_on_day(m, p, r, d, prepared)
+                fiber_w[r] * _user_recipes_on_day(m, p, r, d, prepared)
                 for p in prepared.profiles
                 for r in m.R
                 for d in m.D
@@ -451,13 +444,11 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
 
     if options.enforce_weekly_protein and opt.protein_weekly_min is not None:
         protein_w = prepared.protein
-        protein_w_delta = prepared.protein_delta
         protein_target = opt.protein_weekly_min * len(prepared.profiles)
 
         def weekly_protein_min(m: Any) -> Any:
             total = sum(
-                (protein_w[r] + protein_w_delta.get((r, p.name), 0.0))
-                * _user_recipes_on_day(m, p, r, d, prepared)
+                protein_w[r] * _user_recipes_on_day(m, p, r, d, prepared)
                 for p in prepared.profiles
                 for r in m.R
                 for d in m.D
@@ -531,12 +522,16 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
                 if r not in prepared.fixed_recipe_ids
                 for d1, d2 in relevant_pairs
             )
+        whey_term: Any = 0
+        if whey_enabled:
+            whey_term = sum(m.whey[p, d] for p in m.P for d in m.D)
         return (
             opt.diversity_weight * diversity
             + opt.rating_weight * rating_term
             - opt.recency_weight * recency_term
             - opt.slack_weight * slack
             - opt.spacing_weight * spacing_term
+            - settings.topup.whey_solver_penalty * whey_term
         )
 
     model.objective = Objective(rule=objective_rule, sense=maximize)

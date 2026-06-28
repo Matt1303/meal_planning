@@ -5,7 +5,6 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
-from math import ceil
 
 from sqlalchemy import Engine, text
 
@@ -18,7 +17,6 @@ from meal_planner.config import (
     TopUpSettings,
 )
 from meal_planner.db import get_engine
-from meal_planner.optimize.data import per_person_nutrition_deltas
 
 
 @dataclass(frozen=True)
@@ -347,42 +345,37 @@ def _meal_dozen(lines: list[IngredientLine], dozen_groups: set[str]) -> dict[str
     return dict(out)
 
 
-def _build_topups(
+def _whey_meal(topup: TopUpSettings, scoops: int) -> MealEntry:
+    return MealEntry(
+        meal_type="topup",
+        title=f"{topup.whey_label} — {scoops} scoop{'s' if scoops != 1 else ''}",
+        recipe_id=None,
+        kcal=scoops * topup.whey_kcal,
+        fiber_g=scoops * topup.whey_fiber_g,
+        protein_g=scoops * topup.whey_protein_g,
+        fat_g=scoops * topup.whey_fat_g,
+        carbs_g=scoops * topup.whey_carbs_g,
+        is_topup=True,
+        detail=(
+            f"{scoops} × {topup.whey_scoop_grams:.0f} g scoop with water "
+            f"(+{scoops * topup.whey_protein_g:.0f} g protein) — allocated by the optimiser"
+        ),
+    )
+
+
+def _fruit_topups(
     topup: TopUpSettings,
-    day_protein: float,
-    protein_min: float | None,
     day_dozen: dict[str, set[str]],
     dozen_targets: dict[str, int],
+    day_kcal: float,
+    calorie_max: float | None,
 ) -> list[MealEntry]:
-    """Guaranteed gap-fillers: whey scoops for a protein shortfall, and distinct
-    fruit for short fruit Daily Dozen categories (each new fruit adds one to the
-    unique-food count)."""
+    """Distinct fruit to fill short fruit Daily Dozen categories, but only while
+    it keeps the day within the calorie ceiling (calories take priority)."""
     entries: list[MealEntry] = []
     if not topup.enabled:
         return entries
-
-    if protein_min is not None and day_protein < protein_min and topup.whey_protein_g > 0:
-        gap = protein_min - day_protein
-        scoops = min(topup.max_whey_scoops, ceil(gap / topup.whey_protein_g))
-        if scoops > 0:
-            entries.append(
-                MealEntry(
-                    meal_type="topup",
-                    title=f"{topup.whey_label} — {scoops} scoop{'s' if scoops != 1 else ''}",
-                    recipe_id=None,
-                    kcal=scoops * topup.whey_kcal,
-                    fiber_g=scoops * topup.whey_fiber_g,
-                    protein_g=scoops * topup.whey_protein_g,
-                    fat_g=scoops * topup.whey_fat_g,
-                    carbs_g=scoops * topup.whey_carbs_g,
-                    is_topup=True,
-                    detail=(
-                        f"{scoops} × {topup.whey_scoop_grams:.0f} g scoop with water "
-                        f"(+{scoops * topup.whey_protein_g:.0f} g protein)"
-                    ),
-                )
-            )
-
+    running_kcal = day_kcal
     fruits_by_group: dict[str, list[TopUpFruit]] = defaultdict(list)
     for fruit in topup.fruits:
         fruits_by_group[fruit.food_group].append(fruit)
@@ -397,7 +390,10 @@ def _build_topups(
                 break
             if fruit.name.strip().lower() in present:
                 continue
+            if calorie_max is not None and running_kcal + fruit.kcal > calorie_max:
+                continue  # would breach the calorie ceiling — skip
             present.add(fruit.name.strip().lower())
+            running_kcal += fruit.kcal
             gap -= 1
             entries.append(
                 MealEntry(
@@ -464,7 +460,8 @@ def load_plan_view(
                 SELECT pdp.day, pdp.profile_id, up.name, COALESCE(up.display_name, up.name),
                        pdp.kcal, pdp.fiber_g, pdp.protein_g, pdp.fat_g, pdp.carbs_g,
                        up.calories_daily_min, up.calories_daily_max,
-                       up.fiber_daily_min, up.protein_daily_min, up.protein_daily_max
+                       up.fiber_daily_min, up.protein_daily_min, up.protein_daily_max,
+                       pdp.whey_scoops
                 FROM meal_planning.plan_day_profile pdp
                 JOIN meal_planning.user_profile up ON up.profile_id = pdp.profile_id
                 WHERE pdp.plan_run_id = :pr
@@ -481,7 +478,6 @@ def load_plan_view(
     ingredients_by_recipe = _load_ingredient_breakdown(eng, recipe_ids)
 
     topup_cfg = settings.topup if settings is not None else TopUpSettings(enabled=False)
-    nutrition_deltas = per_person_nutrition_deltas(eng, settings) if settings is not None else {}
     dozen_groups = set(targets_map)
     run_date: date | None = None
     if run_row[1] is not None:
@@ -531,10 +527,12 @@ def load_plan_view(
     # Targets the plan was actually built with (from user_profile), so a loaded
     # plan's shortfall + top-ups match its own targets, not the current config.
     stored_targets: dict[int, ProfileTargets] = {}
+    whey_by_day_profile: dict[tuple[int, int], int] = {}
     for row in day_profile_rows:
         pid = int(row[1])
         profile_id_to_name[pid] = str(row[2])
         profile_id_to_display[pid] = str(row[3])
+        whey_by_day_profile[(int(row[0]), pid)] = int(row[14] or 0)
         if pid not in stored_targets and any(v is not None for v in row[9:14]):
             stored_targets[pid] = ProfileTargets(
                 name=str(row[2]),
@@ -564,22 +562,7 @@ def load_plan_view(
             if meal.recipe_id is not None
             else {}
         )
-        delta = (
-            nutrition_deltas.get((meal.recipe_id, profile_name))
-            if meal.recipe_id is not None
-            else None
-        )
-        if delta is None:
-            return dataclasses.replace(meal, dozen=dozen)
-        return dataclasses.replace(
-            meal,
-            kcal=meal.kcal + delta[0],
-            fiber_g=meal.fiber_g + delta[1],
-            protein_g=meal.protein_g + delta[2],
-            fat_g=meal.fat_g + delta[3],
-            carbs_g=meal.carbs_g + delta[4],
-            dozen=dozen,
-        )
+        return dataclasses.replace(meal, dozen=dozen)
 
     plan_days: list[DayPlan] = []
     for day_int in days_int:
@@ -590,18 +573,27 @@ def load_plan_view(
             user_meals = list(meals_by_day_profile.get((day_int, profile_id), []))
             combined = [_enrich(m, name) for m in (list(shared) + user_meals)]
 
+            # Whey the optimiser allocated for this person/day (protein within
+            # the calorie band) — show it as a meal so totals reconcile.
+            scoops = whey_by_day_profile.get((day_int, profile_id), 0)
+            if scoops > 0 and topup_cfg.enabled:
+                combined.append(_whey_meal(topup_cfg, scoops))
+
             day_dozen: dict[str, set[str]] = defaultdict(set)
             for m in combined:
                 for group, foods in m.dozen.items():
                     day_dozen[group].update(foods)
 
             targets = stored_targets.get(profile_id) or _targets_for(opt, targets_by_name.get(name))
-            base_protein = sum(m.protein_g for m in combined)
-            protein_min = (
-                float(targets.protein_daily_min) if targets.protein_daily_min is not None else None
+            # Fruit top-ups only while they keep the day within the calorie ceiling.
+            current_kcal = sum(m.kcal for m in combined)
+            calorie_max = (
+                float(targets.calories_daily_max)
+                if targets.calories_daily_max is not None
+                else None
             )
-            topups = _build_topups(
-                topup_cfg, base_protein, protein_min, dict(day_dozen), targets_map
+            topups = _fruit_topups(
+                topup_cfg, dict(day_dozen), targets_map, current_kcal, calorie_max
             )
             combined += topups
             for m in topups:

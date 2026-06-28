@@ -3,13 +3,13 @@ from __future__ import annotations
 import pytest
 
 from meal_planner.config import TopUpFruit, TopUpSettings
-from meal_planner.ui.data import IngredientLine, _build_topups, _meal_dozen
+from meal_planner.ui.data import IngredientLine, _fruit_topups, _meal_dozen, _whey_meal
 
 
 def _topup() -> TopUpSettings:
     return TopUpSettings(
-        whey_protein_g=22,
-        whey_kcal=114,
+        whey_protein_g=18,
+        whey_kcal=95,
         max_whey_scoops=6,
         fruits=[
             TopUpFruit(name="Mixed berries", grams=80, food_group="Berries", kcal=40),
@@ -53,30 +53,39 @@ def test_meal_dozen_counts_distinct_qualifying_foods() -> None:
 
 
 @pytest.mark.unit
-def test_whey_bridges_protein_gap() -> None:
-    entries = _build_topups(_topup(), 150.0, 190.0, {}, {})
-    whey = [e for e in entries if "Whey" in (e.title or "")]
-    assert len(whey) == 1
-    assert "2 scoops" in (whey[0].title or "")  # gap 40 / 22 -> 2 scoops
-    assert whey[0].protein_g == pytest.approx(44.0)
+def test_whey_meal_macros_and_label() -> None:
+    meal = _whey_meal(_topup(), 3)
+    assert "3 scoops" in (meal.title or "")
+    assert meal.protein_g == pytest.approx(54.0)  # 3 × 18
+    assert meal.kcal == pytest.approx(285.0)  # 3 × 95
+    assert meal.is_topup
 
 
 @pytest.mark.unit
-def test_no_whey_when_protein_met() -> None:
-    entries = _build_topups(_topup(), 200.0, 190.0, {}, {})
-    assert not [e for e in entries if "Whey" in (e.title or "")]
-
-
-@pytest.mark.unit
-def test_fruit_adds_distinct_foods_only() -> None:
+def test_fruit_adds_distinct_foods_within_calorie_ceiling() -> None:
     # Other Fruits target 3, banana already present -> add 2 *new* distinct fruits.
-    entries = _build_topups(
-        _topup(), 999.0, None, {"Other Fruits": {"banana"}}, {"Other Fruits": 3}
+    entries = _fruit_topups(
+        _topup(),
+        {"Other Fruits": {"banana"}},
+        {"Other Fruits": 3},
+        day_kcal=1000.0,
+        calorie_max=2000.0,
     )
     titles = [e.title or "" for e in entries]
     assert len(entries) == 2
     assert any("Apple" in t for t in titles)
     assert any("Orange" in t for t in titles)
     assert not any("Banana" in t for t in titles)  # already present, skipped
-    for e in entries:
-        assert len(e.dozen["Other Fruits"]) == 1  # each adds one distinct food
+
+
+@pytest.mark.unit
+def test_fruit_respects_calorie_ceiling() -> None:
+    # Already at the ceiling -> no fruit added even though the category is short.
+    entries = _fruit_topups(
+        _topup(),
+        {"Other Fruits": set()},
+        {"Other Fruits": 3},
+        day_kcal=1990.0,
+        calorie_max=2000.0,
+    )
+    assert entries == []

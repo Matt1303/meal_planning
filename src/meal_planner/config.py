@@ -254,6 +254,9 @@ class TopUpSettings(BaseModel):
     whey_carbs_g: float = 2.7
     whey_fiber_g: float = 0.0
     max_whey_scoops: int = 6
+    # Small objective penalty per whey scoop so the solver prefers real food but
+    # still allocates whey to hit the protein floor within the calorie band.
+    whey_solver_penalty: float = 1.0
     fruits: list[TopUpFruit] = Field(default_factory=list)
 
 
