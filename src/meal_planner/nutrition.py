@@ -427,6 +427,17 @@ def _decimal_or_none(value: Any) -> Decimal | None:
         return None
 
 
+# Circuit breaker: if OpenFoodFacts is unreachable, stop hammering it (each
+# call retries 3x at the read timeout) after a few consecutive failures.
+_OFF_STATE: dict[str, int | bool] = {"failures": 0, "disabled": False}
+_OFF_FAILURE_LIMIT = 3
+
+
+def _reset_off_breaker() -> None:
+    _OFF_STATE["failures"] = 0
+    _OFF_STATE["disabled"] = False
+
+
 def _lookup_open_food_facts(
     ingredient: str,
     *,
@@ -436,7 +447,7 @@ def _lookup_open_food_facts(
     countries: str = "",
     lc: str = "en",
 ) -> NutritionResult | None:
-    if not enabled:
+    if not enabled or _OFF_STATE["disabled"]:
         return None
     cleaned = _clean_for_fuzzy(ingredient)
     if not cleaned:
@@ -468,6 +479,7 @@ def _lookup_open_food_facts(
                 return None
             products_raw = payload.get("products") if isinstance(payload, dict) else None
             products = [p for p in products_raw if isinstance(p, dict)] if products_raw else []
+            _OFF_STATE["failures"] = 0  # a reachable response resets the breaker
             picked = _off_pick(products, ingredient)
             if picked is None:
                 return None
@@ -492,7 +504,16 @@ def _lookup_open_food_facts(
             continue
         return None
     if last_error is not None:
-        log.warning("nutrition.off_failed", error=str(last_error))
+        _OFF_STATE["failures"] = int(_OFF_STATE["failures"]) + 1
+        if int(_OFF_STATE["failures"]) >= _OFF_FAILURE_LIMIT:
+            _OFF_STATE["disabled"] = True
+            log.warning(
+                "nutrition.off_disabled",
+                after_failures=_OFF_STATE["failures"],
+                error=str(last_error),
+            )
+        else:
+            log.warning("nutrition.off_failed", error=str(last_error))
     return None
 
 
@@ -908,6 +929,7 @@ def enrich_nutrition(
     off_lc = settings.nutrition.open_food_facts_lc
     cooking_oils = {oil.strip().lower() for oil in settings.nutrition.cooking_oils}
     oil_absorption = Decimal(str(settings.nutrition.cooking_oil_absorption))
+    _reset_off_breaker()
 
     # Phase 0a: seed manual nutrition overrides so they are cached and win over
     # any LLM/OFF lookup (and survive a cache wipe).
