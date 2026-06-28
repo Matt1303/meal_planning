@@ -460,7 +460,9 @@ def load_plan_view(
             text(
                 """
                 SELECT pdp.day, pdp.profile_id, up.name, COALESCE(up.display_name, up.name),
-                       pdp.kcal, pdp.fiber_g, pdp.protein_g, pdp.fat_g, pdp.carbs_g
+                       pdp.kcal, pdp.fiber_g, pdp.protein_g, pdp.fat_g, pdp.carbs_g,
+                       up.calories_daily_min, up.calories_daily_max,
+                       up.fiber_daily_min, up.protein_daily_min, up.protein_daily_max
                 FROM meal_planning.plan_day_profile pdp
                 JOIN meal_planning.user_profile up ON up.profile_id = pdp.profile_id
                 WHERE pdp.plan_run_id = :pr
@@ -514,9 +516,23 @@ def load_plan_view(
 
     profile_id_to_name: dict[int, str] = {}
     profile_id_to_display: dict[int, str] = {}
+    # Targets the plan was actually built with (from user_profile), so a loaded
+    # plan's shortfall + top-ups match its own targets, not the current config.
+    stored_targets: dict[int, ProfileTargets] = {}
     for row in day_profile_rows:
-        profile_id_to_name[int(row[1])] = str(row[2])
-        profile_id_to_display[int(row[1])] = str(row[3])
+        pid = int(row[1])
+        profile_id_to_name[pid] = str(row[2])
+        profile_id_to_display[pid] = str(row[3])
+        if pid not in stored_targets and any(v is not None for v in row[9:14]):
+            stored_targets[pid] = ProfileTargets(
+                name=str(row[2]),
+                display_name=str(row[3]),
+                calories_daily_min=int(row[9]) if row[9] is not None else None,
+                calories_daily_max=int(row[10]) if row[10] is not None else None,
+                fiber_daily_min=int(row[11]) if row[11] is not None else None,
+                protein_daily_min=int(row[12]) if row[12] is not None else None,
+                protein_daily_max=int(row[13]) if row[13] is not None else None,
+            )
 
     if not profile_id_to_name and profile_lookup:
         for pid, display in profile_lookup.items():
@@ -567,7 +583,7 @@ def load_plan_view(
                 for group, foods in m.dozen.items():
                     day_dozen[group].update(foods)
 
-            targets = _targets_for(opt, targets_by_name.get(name))
+            targets = stored_targets.get(profile_id) or _targets_for(opt, targets_by_name.get(name))
             base_protein = sum(m.protein_g for m in combined)
             protein_min = (
                 float(targets.protein_daily_min) if targets.protein_daily_min is not None else None

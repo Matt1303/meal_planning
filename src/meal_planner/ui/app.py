@@ -432,15 +432,29 @@ def _breakfast_titles() -> list[str]:
     return [str(row[0]) for row in rows]
 
 
+def _generic_profile(name: str) -> ProfileTargets:
+    return ProfileTargets(
+        name=name,
+        display_name=name,
+        calories_daily_min=1800,
+        calories_daily_max=2400,
+        protein_daily_min=60,
+        fiber_daily_min=30,
+    )
+
+
 def _profile_widgets(
-    label: str, key_prefix: str, name_default: str, breakfast_options: list[str]
+    label: str, key_prefix: str, default: ProfileTargets, breakfast_options: list[str]
 ) -> ProfileTargets:
-    name = st.text_input(f"{label} name", value=name_default, key=f"{key_prefix}_name")
+    name = st.text_input(f"{label} name", value=default.name, key=f"{key_prefix}_name")
     cal_min, cal_max = st.slider(
         f"{label} calories range (kcal)",
         min_value=1000,
         max_value=4000,
-        value=(1800, 2400),
+        value=(
+            int(default.calories_daily_min or 1800),
+            int(default.calories_daily_max or 2400),
+        ),
         step=50,
         key=f"{key_prefix}_kcal",
     )
@@ -448,7 +462,7 @@ def _profile_widgets(
         f"{label} protein min (g/day)",
         min_value=0,
         max_value=300,
-        value=60,
+        value=int(default.protein_daily_min or 0),
         step=5,
         key=f"{key_prefix}_protein",
     )
@@ -456,13 +470,17 @@ def _profile_widgets(
         f"{label} fibre min (g/day)",
         min_value=0,
         max_value=120,
-        value=30,
+        value=int(default.fiber_daily_min or 0),
         step=1,
         key=f"{key_prefix}_fibre",
     )
+    fixed_options = [NO_FIXED_BREAKFAST, *breakfast_options]
+    default_fixed = default.fixed_meals.get("breakfast")
+    fixed_index = fixed_options.index(default_fixed) if default_fixed in fixed_options else 0
     fixed_breakfast = st.selectbox(
         f"{label} fixed breakfast (same every day)",
-        [NO_FIXED_BREAKFAST, *breakfast_options],
+        fixed_options,
+        index=fixed_index,
         key=f"{key_prefix}_fixed_breakfast",
         help="Pin one recipe to this person's breakfast every day; "
         "the optimiser plans the rest of the day around it.",
@@ -495,28 +513,37 @@ def render() -> None:
         return
     base_settings = _bootstrap_settings(config_path)
 
+    cfg_profiles = base_settings.household.profiles
+    default_a = cfg_profiles[0] if len(cfg_profiles) >= 1 else _generic_profile("user_a")
+    default_b = cfg_profiles[1] if len(cfg_profiles) >= 2 else _generic_profile("user_b")
+
     st.sidebar.header("Household")
-    use_two = st.sidebar.checkbox("Two users", value=True)
+    use_two = st.sidebar.checkbox("Two users", value=len(cfg_profiles) != 1)
     shared = st.sidebar.multiselect(
         "Shared meals (same dish for both users each day)",
         list(ALL_MEAL_TYPES),
-        default=list(DEFAULT_SHARED),
+        default=base_settings.household.shared_meal_types or list(DEFAULT_SHARED),
         disabled=not use_two,
     )
 
     breakfast_options = _breakfast_titles()
     if use_two:
-        with st.sidebar.expander("User A targets", expanded=True):
-            profile_a = _profile_widgets("User A", "a", "user_a", breakfast_options)
-        with st.sidebar.expander("User B targets", expanded=True):
-            profile_b = _profile_widgets("User B", "b", "user_b", breakfast_options)
+        with st.sidebar.expander(
+            f"{default_a.display_name or default_a.name} targets", expanded=True
+        ):
+            profile_a = _profile_widgets("User A", "a", default_a, breakfast_options)
+        with st.sidebar.expander(
+            f"{default_b.display_name or default_b.name} targets", expanded=True
+        ):
+            profile_b = _profile_widgets("User B", "b", default_b, breakfast_options)
         profiles = [profile_a, profile_b]
         if profile_a.name == profile_b.name:
             st.sidebar.error("Profile names must be unique")
             return
     else:
+        single_default = cfg_profiles[0] if cfg_profiles else _generic_profile("default")
         with st.sidebar.expander("User targets", expanded=True):
-            profiles = [_profile_widgets("User", "single", "default", breakfast_options)]
+            profiles = [_profile_widgets("User", "single", single_default, breakfast_options)]
 
     st.sidebar.header("Variety & ratings")
     spacing_weight = st.sidebar.slider(
