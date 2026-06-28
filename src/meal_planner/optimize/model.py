@@ -28,6 +28,7 @@ class ModelOptions:
     enforce_weekly_protein: bool
     enforce_group_targets: bool
     enforce_weekly_groups: bool
+    enforce_leftover_pairing: bool = True
 
 
 def _slot_user_keys(prepared: PreparedData) -> list[tuple[str, str]]:
@@ -223,6 +224,25 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
             return sum(_meal_appearances(m, r, d, prepared) for d in m.D) >= 1
 
         model.must_include = Constraint(Set(initialize=must_ids), rule=must_include_rule)
+
+    # Batch cooking / leftovers: each shared lunch/dinner dish that is used appears
+    # exactly twice (cook fresh once, eat as leftovers once). Needs an even number
+    # of days so the slots tile into pairs; gated so it can be relaxed away.
+    leftover_active = (
+        opt.leftover_pairing
+        and options.enforce_leftover_pairing
+        and bool(prepared.shared_meal_types)
+        and len(prepared.days) % 2 == 0
+    )
+    if leftover_active:
+        leftover_keys = [(r, meal) for r in prepared.recipes for meal in prepared.shared_meal_types]
+        model.LEFTOVER = Set(initialize=leftover_keys, dimen=2)
+        model.leftover_used = Var(model.LEFTOVER, domain=Binary)
+
+        def leftover_rule(m: Any, r: int, meal: str) -> Any:
+            return sum(m.x_shared[r, d, meal] for d in m.D) == 2 * m.leftover_used[r, meal]
+
+        model.leftover_pairing = Constraint(model.LEFTOVER, rule=leftover_rule)
 
     def one_per_day_rule(m: Any, p: str, r: int, d: int) -> Any:
         profile = profiles_by_name[p]

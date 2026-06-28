@@ -85,6 +85,7 @@ _LEVELS: list[tuple[RelaxationLevel, ModelOptions]] = [
             enforce_weekly_protein=False,
             enforce_group_targets=False,
             enforce_weekly_groups=False,
+            enforce_leftover_pairing=False,
         ),
     ),
 ]

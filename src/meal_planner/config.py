@@ -131,7 +131,10 @@ class OptimizerSettings(BaseModel):
     max_recipe_repeats: int = Field(default=2, ge=1)
     solver_time_limit: int = Field(default=300, gt=0)
     solver_mip_gap: float = Field(default=0.05, ge=0, le=1)
-    planning_horizon_days: int = Field(default=7, ge=1, le=30)
+    planning_horizon_days: int = Field(default=8, ge=1, le=30)
+    # Batch cooking: each shared lunch/dinner dish appears exactly twice (fresh +
+    # leftovers). Needs an even planning_horizon_days to tile into pairs.
+    leftover_pairing: bool = True
     calories_weekly_min: int | None = 12_600
     calories_weekly_max: int | None = 16_800
     fiber_weekly_min: int | None = 210

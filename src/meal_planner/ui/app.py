@@ -299,7 +299,12 @@ def _render_profile_day(
                 snack_index += 1
                 label = "Snack" if filled_snacks <= 1 else f"Snack {snack_index}"
 
-            heading = f"**{label}**: {entry.title}"
+            leftover_tag = (
+                " <span style='color:#888;font-style:italic'>(leftovers)</span>"
+                if entry.is_leftover
+                else ""
+            )
+            heading = f"**{label}**: {entry.title}{leftover_tag}"
             if entry.rating is not None:
                 heading += f"  \n<span style='color:#b58900;font-size:0.85em'>{_stars(entry.rating)}</span>"
             heading += (
@@ -618,6 +623,15 @@ def render() -> None:
         max_value=14,
         value=int(base_settings.optimizer.planning_horizon_days),
     )
+    leftovers = st.sidebar.checkbox(
+        "Batch-cook lunch & dinner (each dish twice: fresh + leftovers)",
+        value=base_settings.optimizer.leftover_pairing,
+        help="Each shared lunch/dinner dish appears exactly twice in the week. "
+        "Needs an even planning horizon (e.g. 8 days) to pair cleanly.",
+    )
+    if leftovers and horizon % 2 == 1:
+        horizon += 1
+        st.sidebar.caption(f"⚠️ Leftover pairing needs an even horizon — using {horizon} days.")
     max_snacks = st.sidebar.slider(
         "Max snacks per day",
         min_value=1,
@@ -640,6 +654,7 @@ def render() -> None:
                     "min_rating": min_rating,
                     "max_recipe_repeats": max_repeats,
                     "planning_horizon_days": horizon,
+                    "leftover_pairing": leftovers,
                     "max_snacks_per_day": max_snacks,
                     "must_include_recipe_ids": must_include_ids,
                     "snack_optional": "snack" in base_settings.meal_types,

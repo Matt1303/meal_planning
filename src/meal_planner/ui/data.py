@@ -37,6 +37,8 @@ class MealEntry:
     dozen: dict[str, list[str]] = field(default_factory=dict)
     is_topup: bool = False
     detail: str | None = None
+    # A repeat of a shared dish already cooked earlier in the week (leftovers).
+    is_leftover: bool = False
 
 
 @dataclass(frozen=True)
@@ -487,14 +489,23 @@ def load_plan_view(
         run_date = candidate.date() if hasattr(candidate, "date") else candidate
     last_eaten_by_recipe = _load_last_eaten(eng, recipe_ids, run_date)
 
-    # Bucket meals: per (day, profile_id) -> list of MealEntry
+    # Bucket meals: per (day, profile_id) -> list of MealEntry. meal_rows is
+    # ordered by day, so the first time a shared dish appears is "fresh" and any
+    # later appearance for the same meal type is leftovers.
     meals_by_day_profile: dict[tuple[int, int], list[MealEntry]] = {}
     shared_meals_by_day: dict[int, list[MealEntry]] = {}
+    seen_shared: set[tuple[str, int]] = set()
     for row in meal_rows:
         day_int = int(row[0])
         meal_type = str(row[1])
         profile_id = int(row[2])
         recipe_id = int(row[3]) if row[3] is not None else None
+        is_leftover = False
+        if profile_id == 0 and recipe_id is not None:
+            if (meal_type, recipe_id) in seen_shared:
+                is_leftover = True
+            else:
+                seen_shared.add((meal_type, recipe_id))
         entry = MealEntry(
             meal_type=meal_type,
             title=row[4],
@@ -506,6 +517,7 @@ def load_plan_view(
             carbs_g=_f(row[9]),
             rating=rating_by_recipe.get(recipe_id) if recipe_id is not None else None,
             last_eaten=last_eaten_by_recipe.get(recipe_id) if recipe_id is not None else None,
+            is_leftover=is_leftover,
         )
         if profile_id == 0:
             shared_meals_by_day.setdefault(day_int, []).append(entry)

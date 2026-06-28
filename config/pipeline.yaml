@@ -98,7 +98,10 @@ optimizer:
   max_recipe_repeats: 2
   solver_time_limit: 300
   solver_mip_gap: 0.05
-  planning_horizon_days: 7
+  # 8 days (even) so each shared lunch/dinner dish can be paired: cooked fresh
+  # once and eaten as leftovers once (leftover_pairing below).
+  planning_horizon_days: 8
+  leftover_pairing: true
   # Weekly calorie/fibre caps disabled: the per-profile daily targets in the
   # household block below drive the plan (the weekly caps were a single-user
   # default and would fight two very different daily targets).
