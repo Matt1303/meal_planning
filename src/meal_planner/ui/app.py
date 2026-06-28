@@ -112,7 +112,7 @@ def _render_dozen_strip(daily_dozen: dict[str, tuple[int, int, float]]) -> None:
             color = "#bf8700"  # partial — amber
         else:
             color = "#9aa0a6"  # missed — grey
-        tooltip = f"{group}: {_fmt_servings(portions)} of {target} servings today"
+        tooltip = f"{group}: {_fmt_servings(portions)} of {target} distinct foods today"
         chips.append(
             f"<span title='{tooltip}' style='display:inline-block;margin:0 12px 4px 0;"
             f"white-space:nowrap;color:{color};font-size:0.95em'>"
@@ -124,12 +124,16 @@ def _render_dozen_strip(daily_dozen: dict[str, tuple[int, int, float]]) -> None:
     )
 
 
-def _meal_dozen_line(dozen: dict[str, float]) -> str:
-    parts = [
-        f"{DOZEN_ICONS.get(group, '•')} {_fmt_servings(dozen[group])}"
-        for group in _DOZEN_ORDER
-        if dozen.get(group, 0.0) >= 0.05
-    ]
+def _meal_dozen_line(dozen: dict[str, list[str]]) -> str:
+    parts: list[str] = []
+    for group in _DOZEN_ORDER:
+        foods = dozen.get(group)
+        if not foods:
+            continue
+        icon = DOZEN_ICONS.get(group, "•")
+        label = f"{icon} {len(foods)}" if len(foods) > 1 else icon
+        tooltip = f"{group}: {', '.join(foods)}"
+        parts.append(f"<span title='{tooltip}'>{label}</span>")
     return " · ".join(parts)
 
 
@@ -174,8 +178,13 @@ def _render_ingredient_table(ingredients: list[IngredientLine], meal_kcal: float
             warn.append("sub-recipe not yet expanded")
         if warn:
             flagged.append(f"`{ing.raw_text}` — {', '.join(warn)}")
+        dd = ""
+        if ing.food_group in DOZEN_ICONS:
+            icon = DOZEN_ICONS[ing.food_group]
+            dd = icon if ing.dozen_qualifies else f"({icon})"
         rows.append(
             {
+                "DD": dd,
                 "Ingredient": ing.raw_text,
                 "g/serving": grams_disp,
                 "kcal": f"{ing.kcal:.0f}",
@@ -187,6 +196,11 @@ def _render_ingredient_table(ingredients: list[IngredientLine], meal_kcal: float
             }
         )
     st.dataframe(rows, hide_index=True, use_container_width=True)
+    if any(ing.food_group in DOZEN_ICONS for ing in ingredients):
+        st.caption(
+            "DD = Daily Dozen category. A plain icon counts toward that category; "
+            "(icon) means it's present but below the min portion, so it doesn't count."
+        )
     if any(ing.portion_estimated and ing.per_serving_grams is not None for ing in ingredients):
         st.caption("\\* estimated default portion — the recipe gave no quantity.")
     ingredient_kcal_sum = sum(ing.kcal for ing in ingredients)
