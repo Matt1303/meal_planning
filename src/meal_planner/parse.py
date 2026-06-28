@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import warnings
 from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -28,6 +29,11 @@ from meal_planner.llm.factory import get_llm_client
 from meal_planner.logging import get_logger
 from meal_planner.metrics import MetricName
 from meal_planner.units import UnitTable
+
+# quantulum3 bundles a unit-disambiguation classifier pickled with an older
+# scikit-learn; the model still loads fine, so silence the precautionary
+# version-mismatch warning rather than letting it spam every parse run.
+warnings.filterwarnings("ignore", message="Trying to unpickle estimator")
 
 log = get_logger(__name__)
 
