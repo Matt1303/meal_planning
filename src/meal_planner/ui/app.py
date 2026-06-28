@@ -11,6 +11,13 @@ from meal_planner.correlation import new_correlation_id, set_correlation_id
 from meal_planner.db import get_engine, wait_for_db
 from meal_planner.logging import configure as configure_logging
 from meal_planner.optimize import optimize_plan, write_plan
+from meal_planner.optimize.confirm import confirm_plan, plan_status
+from meal_planner.shopping import (
+    SECTION_ORDER,
+    fetch_shopping_list,
+    set_item_checked,
+    shopping_list_markdown,
+)
 from meal_planner.ui.charts import (
     daily_dozen_heatmap,
     daily_dozen_weekly_chart,
@@ -647,11 +654,94 @@ def render() -> None:
         st.info("No plan run yet — set parameters in the sidebar and click **Generate plan**.")
         return
 
-    plan_tab, dashboard_tab = st.tabs(["Plan view", "Dashboard"])
+    _render_confirm_bar(view, settings)
+
+    plan_tab, shopping_tab, dashboard_tab = st.tabs(["Plan view", "Shopping list", "Dashboard"])
     with plan_tab:
         _render_plan(view, _ordered_meal_types(view))
+    with shopping_tab:
+        _render_shopping(view)
     with dashboard_tab:
         _render_dashboard(view, settings)
+
+
+def _next_monday(today: date) -> date:
+    return today + timedelta(days=(7 - today.weekday()) or 7)
+
+
+def _render_confirm_bar(view: PlanView, settings: Settings) -> None:
+    eng = get_engine()
+    with eng.connect() as conn:
+        status = plan_status(conn, view.plan_run_id)
+    cols = st.columns([3, 2, 2])
+    if status.confirmed and status.scheduled_week is not None:
+        cols[0].success(
+            f"✅ Plan {view.plan_run_id} confirmed — scheduled for "
+            f"w/c {status.scheduled_week:%d %b %Y}"
+        )
+    else:
+        cols[0].info(
+            f"Plan {view.plan_run_id} is a **draft** — generate as many as you like; "
+            "nothing is scheduled until you confirm."
+        )
+    default_week = status.scheduled_week or _next_monday(date.today())
+    picked = cols[1].date_input(
+        "Week commencing", value=default_week, key=f"week_{view.plan_run_id}"
+    )
+    week_start = picked - timedelta(days=picked.weekday())  # snap to Monday
+    label = "Re-confirm" if status.confirmed else "Confirm & schedule"
+    if cols[2].button(label, type="primary", key=f"confirm_{view.plan_run_id}"):
+        with st.spinner("Confirming…"):
+            n = confirm_plan(view.plan_run_id, week_start, settings, engine=eng)
+        st.success(f"Confirmed · scheduled w/c {week_start:%d %b %Y} · {n} shopping items")
+        st.rerun()
+
+
+def _toggle_shopping_item(plan_run_id: int, canonical: str, key: str) -> None:
+    eng = get_engine()
+    with eng.begin() as conn:
+        set_item_checked(conn, plan_run_id, canonical, bool(st.session_state[key]))
+
+
+def _render_shopping(view: PlanView) -> None:
+    eng = get_engine()
+    with eng.connect() as conn:
+        status = plan_status(conn, view.plan_run_id)
+        items = fetch_shopping_list(conn, view.plan_run_id) if status.confirmed else []
+    if not status.confirmed:
+        st.info("Confirm this plan (above) to generate the week's shopping list.")
+        return
+    if not items:
+        st.warning("No shopping items for this plan — try Re-confirm to rebuild the list.")
+        return
+
+    done = sum(1 for it in items if it.checked)
+    st.caption(f"{done}/{len(items)} in basket")
+    st.progress(done / len(items) if items else 0.0)
+    heading = (
+        f"Shopping list — w/c {status.scheduled_week:%d %b %Y}"
+        if status.scheduled_week is not None
+        else "Shopping list"
+    )
+    st.download_button(
+        "Download as checklist (.md)",
+        shopping_list_markdown(items, heading),
+        file_name="shopping_list.md",
+    )
+    for section in SECTION_ORDER:
+        section_items = [it for it in items if it.section == section]
+        if not section_items:
+            continue
+        st.markdown(f"**{section}**")
+        for item in section_items:
+            key = f"chk_{view.plan_run_id}_{item.ingredient_canonical}"
+            st.checkbox(
+                item.display_text,
+                value=item.checked,
+                key=key,
+                on_change=_toggle_shopping_item,
+                args=(view.plan_run_id, item.ingredient_canonical, key),
+            )
 
 
 def main() -> None:

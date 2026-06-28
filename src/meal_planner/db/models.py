@@ -227,6 +227,25 @@ class PlanRun(Base):
     slack_total: Mapped[Decimal | None] = mapped_column(Numeric)
     relaxation_level: Mapped[int | None] = mapped_column(Integer)
     correlation_id: Mapped[str | None] = mapped_column(Text)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    scheduled_week: Mapped[date | None] = mapped_column(Date)
+
+
+class ShoppingListItem(Base):
+    __tablename__ = "shopping_list_item"
+    __table_args__ = {"schema": SCHEMA}
+
+    plan_run_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey(f"{SCHEMA}.plan_run.plan_run_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    ingredient_canonical: Mapped[str] = mapped_column(Text, primary_key=True)
+    section: Mapped[str] = mapped_column(Text, nullable=False)
+    display_text: Mapped[str] = mapped_column(Text, nullable=False)
+    total_grams: Mapped[Decimal | None] = mapped_column(Numeric)
+    checked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
 class PlanMeal(Base):

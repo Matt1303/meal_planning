@@ -266,6 +266,8 @@ class Settings(BaseSettings):
     meal_types: list[str] = Field(default_factory=lambda: ["breakfast", "lunch", "dinner", "snack"])
     portion_sizes: dict[str, float] = Field(default_factory=dict)
     daily_dozen_targets: dict[str, int] = Field(default_factory=dict)
+    # keyword -> supermarket section, for the confirmed-plan shopping list.
+    shopping_sections_path: Path = Path("config/supermarket_sections.csv")
 
     @field_validator("portion_sizes")
     @classmethod

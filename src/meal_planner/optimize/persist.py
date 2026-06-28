@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pandas as pd
@@ -11,7 +11,6 @@ from meal_planner.correlation import current_correlation_id
 from meal_planner.db import get_engine
 from meal_planner.db.metrics_repo import record_metric
 from meal_planner.db.plan_repo import (
-    insert_meal_history,
     insert_plan_config,
     insert_plan_day,
     insert_plan_day_group,
@@ -87,7 +86,7 @@ def write_plan(settings: Settings, result: OptimizeResult, *, engine: Engine | N
             conn,
             run_time=run_time,
             config_id=config_id,
-            status="ok",
+            status="draft",
             solver_status=result.solver_status,
             solver_seconds=result.solver_seconds,
             slack_total=result.slack_total,
@@ -227,22 +226,9 @@ def write_plan(settings: Settings, result: OptimizeResult, *, engine: Engine | N
                     daily_portions=daily_portions,
                 )
 
-            for cell in slot_to_cell.values():
-                meal_type_hits = {
-                    recipe_id: mt for mt, c in slot_to_cell.items() for recipe_id in c.values()
-                }
-                for recipe_id in cell.values():
-                    if recipe_id is None:
-                        continue
-                    mt_for_recipe = meal_type_hits.get(recipe_id)
-                    if mt_for_recipe is None:
-                        continue
-                    insert_meal_history(
-                        conn,
-                        recipe_id=recipe_id,
-                        meal_type=mt_for_recipe,
-                        planned_for=date.today(),
-                    )
+            # NB: a generated plan is a *draft* — it is not scheduled (no
+            # meal_history) until the user explicitly confirms it. See
+            # meal_planner.optimize.confirm.confirm_plan.
 
         update_plan_totals(
             conn,
