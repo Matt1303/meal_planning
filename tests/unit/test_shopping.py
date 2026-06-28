@@ -6,8 +6,21 @@ from meal_planner.shopping import (
     ShoppingItem,
     _format_qty,
     _section_for,
+    _singularize,
     shopping_list_markdown,
 )
+
+
+@pytest.mark.unit
+def test_singularize_merges_plurals_not_distinct_items() -> None:
+    # plural variants collapse to the same key
+    assert _singularize("avocados") == _singularize("avocado")
+    assert _singularize("tomatoes") == _singularize("tomato")
+    assert _singularize("onions") == _singularize("onion")
+    # genuinely different items keep distinct keys
+    assert _singularize("baby potatoes") != _singularize("maris piper potatoes")
+    assert _singularize("spring onion") != _singularize("onions")
+
 
 KEYWORDS = [
     ("coconut milk", "Tins & Pulses"),

@@ -85,6 +85,19 @@ def _section_for(canonical: str, food_group: str | None, keywords: list[tuple[st
     return DEFAULT_SECTION
 
 
+def _singularize(name: str) -> str:
+    """Crude singular key so e.g. 'avocado' and 'avocados' merge into one line.
+    Only used as a grouping key, never displayed."""
+    s = name.strip().lower()
+    if s.endswith("ies") and len(s) > 4:
+        return s[:-3] + "y"
+    if s.endswith(("oes", "ses", "shes", "ches", "xes")):
+        return s[:-2]
+    if s.endswith("s") and not s.endswith("ss") and len(s) > 3:
+        return s[:-1]
+    return s
+
+
 def _format_qty(grams: float) -> str:
     if grams >= 1000:
         return f"{grams / 1000:.1f} kg"
@@ -131,13 +144,30 @@ def build_shopping_list(
         {"pr": plan_run_id, "people": int(people)},
     ).fetchall()
 
-    keywords = _load_section_keywords(settings.shopping_sections_path)
-    items: list[ShoppingItem] = []
+    # Merge singular/plural variants (avocado + avocados) into one line, summing
+    # quantities; display the dominant spelling.
+    merged_grams: dict[str, float] = {}
+    merged_group: dict[str, str | None] = {}
+    merged_forms: dict[str, dict[str, float]] = {}
     for canonical, food_group, grams in rows:
         name = str(canonical)
         if name.strip().lower() in _NON_SHOPPING:
             continue
-        total = float(grams) if grams is not None else None
+        key = _singularize(name)
+        g = float(grams) if grams is not None else 0.0
+        merged_grams[key] = merged_grams.get(key, 0.0) + g
+        if merged_group.get(key) is None and food_group is not None:
+            merged_group[key] = str(food_group)
+        forms = merged_forms.setdefault(key, {})
+        forms[name] = forms.get(name, 0.0) + g
+
+    keywords = _load_section_keywords(settings.shopping_sections_path)
+    items: list[ShoppingItem] = []
+    for key, forms in merged_forms.items():
+        # dominant spelling: most grams, then shortest
+        name = max(forms.items(), key=lambda kv: (kv[1], -len(kv[0])))[0]
+        food_group = merged_group.get(key)
+        total = merged_grams[key] or None
         section = _section_for(name, food_group, keywords)
         qty = _format_qty(total) if total else "—"
         order = SECTION_ORDER.index(section) if section in SECTION_ORDER else len(SECTION_ORDER)
