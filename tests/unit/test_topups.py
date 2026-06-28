@@ -57,7 +57,7 @@ def test_whey_bridges_protein_gap() -> None:
     entries = _build_topups(_topup(), 150.0, 190.0, {}, {})
     whey = [e for e in entries if "Whey" in (e.title or "")]
     assert len(whey) == 1
-    assert "×2" in (whey[0].title or "")  # gap 40 / 22 -> 2 scoops
+    assert "2 scoops" in (whey[0].title or "")  # gap 40 / 22 -> 2 scoops
     assert whey[0].protein_g == pytest.approx(44.0)
 
 

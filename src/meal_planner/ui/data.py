@@ -368,7 +368,7 @@ def _build_topups(
             entries.append(
                 MealEntry(
                     meal_type="topup",
-                    title=f"{topup.whey_label} ×{scoops}",
+                    title=f"{topup.whey_label} — {scoops} scoop{'s' if scoops != 1 else ''}",
                     recipe_id=None,
                     kcal=scoops * topup.whey_kcal,
                     fiber_g=scoops * topup.whey_fiber_g,

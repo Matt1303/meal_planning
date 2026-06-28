@@ -55,11 +55,12 @@ daily_dozen_targets:
 topup:
   enabled: true
   whey_label: "Whey protein shake (water)"
-  whey_scoop_grams: 30
-  whey_kcal: 114
-  whey_protein_g: 22
-  whey_fat_g: 1.8
-  whey_carbs_g: 2.7
+  # One scoop = 25 g (whey is ~73 g protein / 379 kcal per 100 g).
+  whey_scoop_grams: 25
+  whey_kcal: 95
+  whey_protein_g: 18
+  whey_fat_g: 1.5
+  whey_carbs_g: 2.2
   whey_fiber_g: 0
   max_whey_scoops: 6
   fruits:
