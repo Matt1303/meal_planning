@@ -132,29 +132,42 @@ def build_shopping_list(
             )
             SELECT ri.ingredient_canonical,
                    max(ri.food_group) AS food_group,
+                   ri.portion_estimated,
                    SUM(ri.per_serving_grams * m.servings) AS total_grams
             FROM meals m
             JOIN meal_planning.recipe_ingredient ri ON ri.recipe_id = m.recipe_id
             WHERE ri.ingredient_canonical IS NOT NULL
               AND ri.per_serving_grams IS NOT NULL
               AND ri.sub_recipe_id IS NULL
-            GROUP BY ri.ingredient_canonical
+            GROUP BY ri.ingredient_canonical, ri.portion_estimated
             """
         ),
         {"pr": plan_run_id, "people": int(people)},
     ).fetchall()
+
+    # Grams are treated as raw/uncooked purchase weights, except cooked default
+    # portions (e.g. rice), which are converted to their raw weight for shopping.
+    cooked_ratio: dict[str, float] = {}
+    for spec in settings.optimizer.per_person_portions:
+        if spec.cooked_to_raw_ratio:
+            for canonical in spec.canonicals:
+                cooked_ratio[canonical.strip().lower()] = spec.cooked_to_raw_ratio
 
     # Merge singular/plural variants (avocado + avocados) into one line, summing
     # quantities; display the dominant spelling.
     merged_grams: dict[str, float] = {}
     merged_group: dict[str, str | None] = {}
     merged_forms: dict[str, dict[str, float]] = {}
-    for canonical, food_group, grams in rows:
+    for canonical, food_group, portion_estimated, grams in rows:
         name = str(canonical)
         if name.strip().lower() in _NON_SHOPPING:
             continue
         key = _singularize(name)
         g = float(grams) if grams is not None else 0.0
+        if portion_estimated:
+            ratio = cooked_ratio.get(name.strip().lower())
+            if ratio:
+                g /= ratio
         merged_grams[key] = merged_grams.get(key, 0.0) + g
         if merged_group.get(key) is None and food_group is not None:
             merged_group[key] = str(food_group)

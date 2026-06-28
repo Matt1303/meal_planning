@@ -103,6 +103,10 @@ class PerPersonPortion(BaseModel):
     grams: dict[str, float]
     value_as: str | None = None
     estimated_only: bool = True
+    # Cooked:raw weight ratio for the shopping list (these default portions are
+    # cooked weights; divide by this to get the raw/dry weight you buy, e.g. 3
+    # for rice). None leaves the weight unchanged.
+    cooked_to_raw_ratio: float | None = None
 
 
 class OptimizerSettings(BaseModel):

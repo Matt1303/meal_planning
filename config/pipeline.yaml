@@ -117,6 +117,7 @@ optimizer:
         [rice, white rice, brown rice, wholegrain rice, basmati rice, jasmine rice, sushi rice]
       value_as: cooked rice
       estimated_only: true
+      cooked_to_raw_ratio: 3
       grams: {matt: 400, ellie: 200}
 
 household:

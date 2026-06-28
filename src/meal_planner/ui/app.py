@@ -719,9 +719,8 @@ def _render_shopping(view: PlanView) -> None:
     st.caption(f"{done}/{len(items)} in basket")
     st.progress(done / len(items) if items else 0.0)
     st.caption(
-        "Quantities are summed per-serving weights as used in the recipes — grains, "
-        "pasta and rice are **cooked** weights, so you'll buy roughly a third (rice) "
-        "to a half (pasta) of the figure shown as dry product."
+        "Quantities are raw/uncooked purchase weights (cooked rice defaults are "
+        "converted to their dry weight). Round up to the nearest pack as needed."
     )
     heading = (
         f"Shopping list — w/c {status.scheduled_week:%d %b %Y}"

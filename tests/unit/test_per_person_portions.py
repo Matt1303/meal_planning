@@ -36,3 +36,5 @@ def test_settings_loads_per_person_portions() -> None:
     assert rice.value_as == "cooked rice"
     assert rice.estimated_only is True
     assert rice.grams == {"matt": 400, "ellie": 200}
+    # cooked-weight defaults convert to dry weight on the shopping list
+    assert rice.cooked_to_raw_ratio == 3
