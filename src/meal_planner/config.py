@@ -138,6 +138,8 @@ class OptimizerSettings(BaseModel):
     protein_weekly_min: int | None = None
     weekly_group_portions_min: dict[str, float] = Field(default_factory=dict)
     include_non_plant: bool = False
+    # Recipe ids the user pinned to appear at least once in the week.
+    must_include_recipe_ids: list[int] = Field(default_factory=list)
     spacing_penalty_by_gap: dict[int, float] = Field(
         default_factory=lambda: {1: 1.0, 2: 0.3, 3: 0.1}
     )

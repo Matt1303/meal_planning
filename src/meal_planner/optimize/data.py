@@ -238,7 +238,9 @@ def per_person_nutrition_deltas(conn: Engine | Connection, settings: Settings) -
 
 def filter_recipes(inputs: ModelInputs, *, min_rating: float, settings: Settings) -> ModelInputs:
     recipes = inputs.recipes.copy()
-    recipes = recipes[recipes["rating"].fillna(0) >= min_rating]
+    must = set(settings.optimizer.must_include_recipe_ids)
+    keep = (recipes["rating"].fillna(0) >= min_rating) | recipes["recipe_id"].isin(must)
+    recipes = recipes[keep]
     if recipes.empty:
         return inputs
     if not inputs.meal_types.empty:

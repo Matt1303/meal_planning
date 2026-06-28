@@ -439,6 +439,26 @@ def _breakfast_titles() -> list[str]:
     return [str(row[0]) for row in rows]
 
 
+@st.cache_data(show_spinner=False)
+def _all_recipe_titles() -> dict[str, int]:
+    from sqlalchemy import text
+
+    engine = get_engine()
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT DISTINCT r.title, r.recipe_id
+                FROM meal_planning.recipe r
+                JOIN meal_planning.recipe_meal_type mt ON mt.recipe_id = r.recipe_id
+                WHERE r.is_plant_based = TRUE AND r.title IS NOT NULL
+                ORDER BY r.title
+                """
+            )
+        ).fetchall()
+    return {str(r[0]): int(r[1]) for r in rows}
+
+
 def _generic_profile(name: str) -> ProfileTargets:
     return ProfileTargets(
         name=name,
@@ -519,6 +539,15 @@ def render() -> None:
         st.sidebar.error(f"Config not found: {config_path}")
         return
     base_settings = _bootstrap_settings(config_path)
+
+    title_to_id = _all_recipe_titles()
+    must_titles = st.multiselect(
+        "Meals that must be included this week",
+        options=list(title_to_id.keys()),
+        help="Search and pick any number of recipes to force into the plan. "
+        "Re-generate to re-optimise around them — each will appear at least once.",
+    )
+    must_include_ids = [title_to_id[t] for t in must_titles if t in title_to_id]
 
     cfg_profiles = base_settings.household.profiles
     default_a = cfg_profiles[0] if len(cfg_profiles) >= 1 else _generic_profile("user_a")
@@ -612,6 +641,7 @@ def render() -> None:
                     "max_recipe_repeats": max_repeats,
                     "planning_horizon_days": horizon,
                     "max_snacks_per_day": max_snacks,
+                    "must_include_recipe_ids": must_include_ids,
                     "snack_optional": "snack" in base_settings.meal_types,
                     "calories_daily_min": None,
                     "calories_daily_max": None,

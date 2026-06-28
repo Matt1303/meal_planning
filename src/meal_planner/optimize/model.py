@@ -215,6 +215,15 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
 
     model.repeat_limit = Constraint(model.R, rule=repeat_rule)
 
+    # User-pinned recipes that must appear at least once during the week.
+    must_ids = [r for r in opt.must_include_recipe_ids if r in set(prepared.recipes)]
+    if must_ids:
+
+        def must_include_rule(m: Any, r: int) -> Any:
+            return sum(_meal_appearances(m, r, d, prepared) for d in m.D) >= 1
+
+        model.must_include = Constraint(Set(initialize=must_ids), rule=must_include_rule)
+
     def one_per_day_rule(m: Any, p: str, r: int, d: int) -> Any:
         profile = profiles_by_name[p]
         return _user_recipes_on_day(m, profile, r, d, prepared) <= 1
