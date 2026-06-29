@@ -174,8 +174,14 @@ def optimize_plan(settings: Settings, *, engine: Engine | None = None) -> Optimi
             TerminationCondition.locallyOptimal,
             TerminationCondition.globallyOptimal,
         }
-        if condition in accepted:
-            plan = _extract_plan(model, prepared)
+        plan = _extract_plan(model, prepared)
+        # The nutrition constraints are soft (slack), so the strict level is always
+        # feasible — if the solver hits the time limit with a complete incumbent,
+        # keep it rather than relaxing away the calorie/protein targets.
+        take = condition in accepted or (
+            condition == TerminationCondition.maxTimeLimit and _plan_complete(plan, prepared)
+        )
+        if take:
             whey = _extract_whey(model, prepared)
             slack = total_slack(model, prepared)
             with eng.begin() as conn:
@@ -238,6 +244,23 @@ def _maybe_force_snack_optional(
             update={"optimizer": settings.optimizer.model_copy(update={"snack_optional": True})}
         )
     return settings
+
+
+def _plan_complete(plan: dict[int, dict[str, PlanCell]], prepared: PreparedData) -> bool:
+    """Every required slot (shared meals + each profile's non-snack meals) filled."""
+    snack_types = set(prepared.snack_meal_types) | {"snack"}
+    for d in prepared.days:
+        day = plan.get(d, {})
+        for meal in prepared.shared_meal_types:
+            if day.get(meal, {}).get(SHARED_KEY) is None:
+                return False
+        for p in prepared.profiles:
+            for meal in prepared.per_user_meal_types:
+                if meal in snack_types:
+                    continue
+                if day.get(meal, {}).get(p.name) is None:
+                    return False
+    return True
 
 
 def _extract_whey(model: Any, prepared: PreparedData) -> dict[tuple[str, int], int]:

@@ -7,7 +7,6 @@ from pyomo.environ import (
     Binary,
     ConcreteModel,
     Constraint,
-    NonNegativeIntegers,
     NonNegativeReals,
     Objective,
     Set,
@@ -78,10 +77,11 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
     # within the calorie band (counts toward both protein and calories).
     whey_enabled = settings.topup.enabled and bool(profile_names)
     if whey_enabled:
+        # Continuous for solver speed; rounded to whole scoops at extraction.
         model.whey = Var(
             model.P,
             model.D,
-            domain=NonNegativeIntegers,
+            domain=NonNegativeReals,
             bounds=(0, settings.topup.max_whey_scoops),
         )
 

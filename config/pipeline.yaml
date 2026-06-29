@@ -135,7 +135,7 @@ household:
       # Calorie target 3300/day (±200 band so the solver has room).
       calories_daily_min: 3100
       calories_daily_max: 3500
-      protein_daily_min: 190
+      protein_daily_min: 180
       fiber_daily_min: 30
       fixed_meals:
         breakfast: "Matt Breakfast Smoothie"
@@ -144,8 +144,10 @@ household:
       # Calorie target 1500/day (±150 band).
       calories_daily_min: 1350
       calories_daily_max: 1650
-      protein_daily_min: 100
+      protein_daily_min: 75
       fiber_daily_min: 25
+      fixed_meals:
+        breakfast: "Ellie Breakfast Oats"
   shared_meal_types:
     - lunch
     - dinner

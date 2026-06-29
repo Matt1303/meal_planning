@@ -73,6 +73,7 @@ def _ordered_meal_types(view: PlanView) -> list[str]:
     present = {
         meal.meal_type for day in view.days for prof in day.per_profile for meal in prof.meals
     }
+    present.discard("topup")  # top-ups render in their own pass, not as a slot
     ordered = [m for m in _MEAL_ORDER if m in present]
     ordered.extend(sorted(m for m in present if m not in ordered))
     return ordered
@@ -106,6 +107,16 @@ def _fmt_servings(value: float) -> str:
 def _render_dozen_strip(daily_dozen: dict[str, tuple[int, int, float]]) -> None:
     if not daily_dozen:
         return
+    # Total servings achieved vs target, each category capped at its target so an
+    # over-target category can't compensate for a missed one.
+    total_target = sum(t for _, t, _ in daily_dozen.values())
+    total_done = sum(min(int(p), t) for _, t, p in daily_dozen.values())
+    color = "#1a7f37" if total_done >= total_target else "#bf8700"
+    st.markdown(
+        f"<span style='font-size:0.9em;color:{color}'><b>Daily Dozen "
+        f"{total_done}/{total_target}</b></span>",
+        unsafe_allow_html=True,
+    )
     chips: list[str] = []
     for group in _DOZEN_ORDER:
         triple = daily_dozen.get(group)
