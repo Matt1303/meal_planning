@@ -47,6 +47,9 @@ class ParseSettings(BaseModel):
     non_plant_terms_path: Path = Path("config/non_plant_terms.yaml")
     # Durable raw_text -> canonical/food_group overrides, seeded every parse run.
     overrides_path: Path = Path("config/ingredient_overrides.csv")
+    # Substring rules (e.g. any "whey protein" line), applied before fuzzy matching
+    # so descriptive words (flavours, brands) can't hijack the canonical.
+    contains_rules_path: Path = Path("config/ingredient_contains_rules.csv")
 
 
 class NutritionSettings(BaseModel):

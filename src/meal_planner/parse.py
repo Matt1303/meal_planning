@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 import warnings
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, cast
@@ -350,6 +350,8 @@ class ParseContext:
     llm_threshold: float
     group_names: list[str]
     default_portions: dict[str, Decimal]
+    # (substring, canonical, food_group), longest substring first.
+    contains_rules: list[tuple[str, str, str | None]] = field(default_factory=list)
 
 
 def _load_default_portions(path: Path) -> dict[str, Decimal]:
@@ -367,6 +369,24 @@ def _load_default_portions(path: Path) -> dict[str, Decimal]:
                     out[canonical] = Decimal(grams)
                 except (InvalidOperation, ArithmeticError, ValueError):
                     continue
+    return out
+
+
+def _load_contains_rules(path: Path) -> list[tuple[str, str, str | None]]:
+    if not path.exists():
+        return []
+    import csv as _csv
+
+    out: list[tuple[str, str, str | None]] = []
+    with path.open(newline="") as fh:
+        for row in _csv.DictReader(fh):
+            needle = (row.get("contains") or "").strip().lower()
+            canonical = (row.get("ingredient_canonical") or "").strip()
+            group = (row.get("food_group") or "").strip() or None
+            if needle and canonical:
+                out.append((needle, canonical, group))
+    # Longest needle first so "coconut milk" beats "milk".
+    out.sort(key=lambda r: len(r[0]), reverse=True)
     return out
 
 
@@ -390,6 +410,7 @@ def build_context(
         llm_threshold=settings.parse.llm_threshold,
         group_names=sorted(set(food_groups.values())),
         default_portions=_load_default_portions(settings.parse.default_portion_grams_path),
+        contains_rules=_load_contains_rules(settings.parse.contains_rules_path),
     )
 
 
@@ -479,6 +500,12 @@ def _resolve_canonical(
     if norm in ctx.overrides:
         canonical, group = ctx.overrides[norm]
         return canonical, group
+    # Substring rules beat fuzzy matching, so descriptive words (flavours, brands)
+    # can't hijack the canonical — e.g. "blueberry whey protein powder".
+    name_norm = normalize_text(ingredient_name)
+    for needle, canonical, group in ctx.contains_rules:
+        if needle in norm or needle in name_norm:
+            return canonical, group or ctx.food_groups.get(canonical)
     syn = ctx.synonyms.get(norm) or ctx.synonyms.get(normalize_text(ingredient_name))
     if syn:
         return syn, ctx.food_groups.get(syn)

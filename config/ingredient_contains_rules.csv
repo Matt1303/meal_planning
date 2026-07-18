@@ -1,0 +1,11 @@
+contains,ingredient_canonical,food_group,note
+whey protein,whey protein,,Any flavour of whey protein powder — flavour words otherwise win the fuzzy match
+protein powder,whey protein,,Generic protein powder (exact-match overrides still win, e.g. Matt's vegan powder)
+almond milk,almond milk,,Stop "almond milk" matching roasted almonds (607 vs 13 kcal/100g)
+almond drink,almond milk,,
+oat milk,oat milk,,
+oat drink,oat milk,,
+soy milk,soy milk,,
+soya milk,soy milk,,
+cashew milk,cashew milk,,
+coconut milk,coconut milk,,
