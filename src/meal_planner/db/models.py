@@ -289,6 +289,27 @@ class PlanDayProfile(Base):
     whey_scoops: Mapped[Decimal] = mapped_column(Numeric, nullable=False, default=0)
 
 
+class PlanMealPortion(Base):
+    """Servings of a shared dish a person eats, when it isn't the full serving."""
+
+    __tablename__ = "plan_meal_portion"
+    __table_args__ = {"schema": SCHEMA}
+
+    plan_run_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey(f"{SCHEMA}.plan_run.plan_run_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    day: Mapped[int] = mapped_column(Integer, primary_key=True)
+    meal_type: Mapped[str] = mapped_column(Text, primary_key=True)
+    profile_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey(f"{SCHEMA}.user_profile.profile_id"),
+        primary_key=True,
+    )
+    servings: Mapped[Decimal] = mapped_column(Numeric, nullable=False, default=1)
+
+
 class PlanDay(Base):
     __tablename__ = "plan_day"
     __table_args__ = {"schema": SCHEMA}

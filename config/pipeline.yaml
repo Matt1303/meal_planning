@@ -149,6 +149,11 @@ household:
       fiber_daily_min: 25
       fixed_meals:
         breakfast: "Ellie Breakfast Oats"
+      # Same lunch/dinner as Matt, smaller plate: the solver picks how much of
+      # each shared dish she has, between half and a full serving. Without this
+      # she inherits portions sized for a 3300 kcal day.
+      shared_portion_min: 0.5
+      shared_portion_max: 1.0
   shared_meal_types:
     - lunch
     - dinner

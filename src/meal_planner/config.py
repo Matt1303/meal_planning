@@ -197,9 +197,19 @@ class ProfileTargets(BaseModel):
     # meal_type -> recipe title to pin on that slot every day for this profile
     # (e.g. {"breakfast": "Matt Breakfast Smoothie"}).
     fixed_meals: dict[str, str] = Field(default_factory=dict)
+    # How much of a shared lunch/dinner this person eats, as a multiple of the
+    # recipe's serving. The solver picks a value in [min, max] per meal, so two
+    # people with very different calorie targets can share the same dish. Leave
+    # both at 1.0 to always serve the full portion.
+    shared_portion_min: float = Field(default=1.0, ge=0.1, le=3.0)
+    shared_portion_max: float = Field(default=1.0, ge=0.1, le=3.0)
 
     @model_validator(mode="after")
     def _validate_ranges(self) -> ProfileTargets:
+        if self.shared_portion_min > self.shared_portion_max:
+            raise ValueError(
+                f"profile '{self.name}': shared_portion_min must be <= shared_portion_max"
+            )
         if (
             self.calories_daily_min is not None
             and self.calories_daily_max is not None

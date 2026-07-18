@@ -110,7 +110,9 @@ def build_shopping_list(
     conn: Connection, plan_run_id: int, settings: Settings
 ) -> list[ShoppingItem]:
     """Aggregate every ingredient in the plan into a household shopping list,
-    grouped by supermarket section. Shared meals count once per person."""
+    grouped by supermarket section. A shared meal counts the servings each
+    person actually eats (so a half portion buys half the food), falling back
+    to one serving per person for plans recorded before portions existed."""
     people = (
         conn.execute(
             text(
@@ -126,7 +128,15 @@ def build_shopping_list(
             """
             WITH meals AS (
                 SELECT pm.recipe_id,
-                       CASE WHEN pm.profile_id = 0 THEN :people ELSE 1 END AS servings
+                       CASE WHEN pm.profile_id = 0
+                            THEN COALESCE(
+                                (SELECT SUM(pmp.servings)
+                                 FROM meal_planning.plan_meal_portion pmp
+                                 WHERE pmp.plan_run_id = pm.plan_run_id
+                                   AND pmp.day = pm.day
+                                   AND pmp.meal_type = pm.meal_type),
+                                :people)
+                            ELSE 1 END AS servings
                 FROM meal_planning.plan_meal pm
                 WHERE pm.plan_run_id = :pr AND pm.recipe_id IS NOT NULL
             )

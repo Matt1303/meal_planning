@@ -37,6 +37,9 @@ class MealEntry:
     detail: str | None = None
     # A repeat of a shared dish already cooked earlier in the week (leftovers).
     is_leftover: bool = False
+    # Servings of the dish this person eats — below 1.0 when a shared dish is
+    # portioned smaller for someone on a lower calorie target.
+    servings: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -139,6 +142,20 @@ def _f(value: Decimal | float | None) -> float:
     if value is None:
         return 0.0
     return float(value)
+
+
+def _scale_meal(meal: MealEntry, servings: float) -> MealEntry:
+    if abs(servings - 1.0) < 0.005:
+        return meal
+    return dataclasses.replace(
+        meal,
+        kcal=meal.kcal * servings,
+        fiber_g=meal.fiber_g * servings,
+        protein_g=meal.protein_g * servings,
+        fat_g=meal.fat_g * servings,
+        carbs_g=meal.carbs_g * servings,
+        servings=servings,
+    )
 
 
 def _load_profile_records(engine: Engine, plan_run_id: int) -> dict[int, str]:
@@ -456,6 +473,17 @@ def load_plan_view(
             {"pr": plan_run_id},
         ).fetchall()
 
+        portion_rows = conn.execute(
+            text(
+                """
+                SELECT day, profile_id, meal_type, servings
+                FROM meal_planning.plan_meal_portion
+                WHERE plan_run_id = :pr
+                """
+            ),
+            {"pr": plan_run_id},
+        ).fetchall()
+
         day_profile_rows = conn.execute(
             text(
                 """
@@ -472,6 +500,10 @@ def load_plan_view(
             ),
             {"pr": plan_run_id},
         ).fetchall()
+
+    servings_by_slot: dict[tuple[int, int, str], float] = {
+        (int(r[0]), int(r[1]), str(r[2])): float(r[3]) for r in portion_rows
+    }
 
     profile_lookup = _load_profile_records(eng, plan_run_id)
 
@@ -573,7 +605,11 @@ def load_plan_view(
         for profile_id, name in profile_id_to_name.items():
             display = profile_id_to_display.get(profile_id, name)
             user_meals = list(meals_by_day_profile.get((day_int, profile_id), []))
-            combined = [_enrich(m, name) for m in (list(shared) + user_meals)]
+            shared_for_profile = [
+                _scale_meal(m, servings_by_slot.get((day_int, profile_id, m.meal_type), 1.0))
+                for m in shared
+            ]
+            combined = [_enrich(m, name) for m in (shared_for_profile + user_meals)]
 
             # Whey the optimiser allocated for this person/day (protein within
             # the calorie band) — show it as a meal so totals reconcile.

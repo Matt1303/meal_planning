@@ -16,6 +16,7 @@ from meal_planner.db.plan_repo import (
     insert_plan_day_group,
     insert_plan_day_profile,
     insert_plan_meal,
+    insert_plan_meal_portion,
     insert_plan_run,
     update_plan_totals,
 )
@@ -135,32 +136,45 @@ def write_plan(settings: Settings, result: OptimizeResult, *, engine: Engine | N
                         profile_id=profile_id,
                     )
 
-            shared_recipes_today: list[int] = []
+            shared_today: list[tuple[str, int]] = []
             for mt in prepared.shared_meal_types:
                 cell = slot_to_cell.get(mt, {})
                 shared_recipe = cell.get(SHARED_KEY)
                 if shared_recipe is not None:
-                    shared_recipes_today.append(shared_recipe)
+                    shared_today.append((mt, shared_recipe))
 
-            per_profile_recipes: dict[str, list[int]] = {
-                p: list(shared_recipes_today) for p in profile_names
+            # (recipe_id, servings) per profile — a shared dish is a part serving
+            # for someone on a smaller calorie target, so macros scale with it.
+            per_profile_recipes: dict[str, list[tuple[int, float]]] = {
+                p: [(r, result.portions.get((p, day, mt), 1.0)) for mt, r in shared_today]
+                for p in profile_names
             }
             for mt in prepared.per_user_meal_types:
                 cell = slot_to_cell.get(mt, {})
                 for owner, recipe_id in cell.items():
                     if owner == SHARED_KEY or recipe_id is None:
                         continue
-                    per_profile_recipes.setdefault(owner, []).append(recipe_id)
+                    per_profile_recipes.setdefault(owner, []).append((recipe_id, 1.0))
 
             day_household = [Decimal(0)] * 5
             topup = settings.topup
             for profile_name in profile_names:
                 profile_id = profile_ids[profile_name]
                 totals = [Decimal(0)] * 5
-                for r in per_profile_recipes[profile_name]:
+                for r, servings in per_profile_recipes[profile_name]:
                     macros = _macros(nutrition, r)
+                    factor = Decimal(str(servings))
                     for i, v in enumerate(macros):
-                        totals[i] += v
+                        totals[i] += v * factor
+                for mt, _ in shared_today:
+                    insert_plan_meal_portion(
+                        conn,
+                        plan_run_id=plan_run_id,
+                        day=day,
+                        meal_type=mt,
+                        profile_id=profile_id,
+                        servings=result.portions.get((profile_name, day, mt), 1.0),
+                    )
                 # Whey the solver allocated for this person/day (kcal, fibre,
                 # protein, fat, carbs).
                 scoops = result.whey.get((profile_name, day), 0.0)

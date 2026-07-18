@@ -25,6 +25,12 @@ class ProfileSpec:
     protein_daily_min: int | None
     protein_daily_max: int | None
     fixed_meals: dict[str, str] = field(default_factory=dict)
+    shared_portion_min: float = 1.0
+    shared_portion_max: float = 1.0
+
+    @property
+    def portion_is_flexible(self) -> bool:
+        return self.shared_portion_max > self.shared_portion_min
 
     @classmethod
     def from_targets(cls, profile: ProfileTargets) -> ProfileSpec:
@@ -34,6 +40,8 @@ class ProfileSpec:
             calories_daily_min=profile.calories_daily_min,
             calories_daily_max=profile.calories_daily_max,
             fiber_daily_min=profile.fiber_daily_min,
+            shared_portion_min=profile.shared_portion_min,
+            shared_portion_max=profile.shared_portion_max,
             protein_daily_min=profile.protein_daily_min,
             protein_daily_max=profile.protein_daily_max,
             fixed_meals=dict(profile.fixed_meals),

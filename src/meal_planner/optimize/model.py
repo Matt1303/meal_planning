@@ -51,6 +51,27 @@ def _user_recipes_on_day(m: Any, p: ProfileSpec, r: int, d: int, prepared: Prepa
     return shared_sum + user_sum
 
 
+def _user_servings_on_day(m: Any, p: ProfileSpec, r: int, d: int, prepared: PreparedData) -> Any:
+    """How many servings of recipe r profile p eats on day d.
+
+    Same as _user_recipes_on_day except a shared dish can be a fraction of a
+    serving when the profile's shared_portion range allows it, so one dish can
+    feed people on very different calorie targets. Used for nutrition only:
+    Daily Dozen and ingredient variety stay dish-based, since a smaller plate
+    of a curry still delivers the same distinct foods.
+    """
+    if p.portion_is_flexible and prepared.shared_meal_types:
+        shared_sum = sum(
+            m.share[p.name, r, d, meal]
+            for meal in prepared.shared_meal_types
+            if prepared.allowed_meal[(r, meal)]
+        )
+    else:
+        shared_sum = sum(m.x_shared[r, d, meal] for meal in prepared.shared_meal_types)
+    user_sum = sum(m.x_user[p.name, r, d, meal] for meal in prepared.per_user_meal_types)
+    return shared_sum + user_sum
+
+
 def build_model(prepared: PreparedData, settings: Settings, options: ModelOptions) -> Any:
     opt = settings.optimizer
     targets = settings.daily_dozen_targets
@@ -70,6 +91,33 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
         model.x_shared = Var(model.R, model.D, model.SHARED_M, domain=Binary)
     if prepared.per_user_meal_types:
         model.x_user = Var(model.P, model.R, model.D, model.USER_M, domain=Binary)
+
+    # How much of a shared dish each person eats, in servings. Only profiles
+    # with a range wider than a point need a variable; everyone else eats the
+    # full serving and the x_shared binary already says so.
+    flexible_profiles = [p for p in prepared.profiles if p.portion_is_flexible]
+    portion_bounds = {
+        p.name: (p.shared_portion_min, p.shared_portion_max) for p in flexible_profiles
+    }
+    # Only recipes the slot can actually take get a variable — most of the
+    # catalogue isn't lunch- or dinner-capable, and x_shared would pin those to
+    # zero anyway.
+    share_keys = [
+        (p.name, r, d, meal)
+        for p in flexible_profiles
+        for meal in prepared.shared_meal_types
+        for r in prepared.recipes
+        if prepared.allowed_meal[(r, meal)]
+        for d in prepared.days
+    ]
+    if share_keys:
+        model.SHARE_KEYS = Set(initialize=share_keys, dimen=4)
+        model.share = Var(
+            model.SHARE_KEYS,
+            domain=NonNegativeReals,
+            bounds=(0, max(p.shared_portion_max for p in flexible_profiles)),
+        )
+
     model.z = Var(model.P, model.D, model.I, domain=Binary)
     model.y = Var(model.P, model.I, domain=Binary)
 
@@ -163,6 +211,46 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
             return m.x_shared[r, d, meal] <= allowed_meal[(r, meal)]
 
         model.shared_allowed = Constraint(model.R, model.D, model.SHARED_M, rule=shared_allowed)
+
+        if share_keys:
+            # Pin share to 0 for dishes not cooked, and into [min, max] for the
+            # one that is. Exact because x_shared is binary.
+            def share_upper_rule(m: Any, p: str, r: int, d: int, meal: str) -> Any:
+                return m.share[p, r, d, meal] <= portion_bounds[p][1] * m.x_shared[r, d, meal]
+
+            def share_lower_rule(m: Any, p: str, r: int, d: int, meal: str) -> Any:
+                return m.share[p, r, d, meal] >= portion_bounds[p][0] * m.x_shared[r, d, meal]
+
+            model.share_upper = Constraint(model.SHARE_KEYS, rule=share_upper_rule)
+            model.share_lower = Constraint(model.SHARE_KEYS, rule=share_lower_rule)
+
+            # Exactly one dish fills the slot, so the shares across recipes must
+            # add to one person's portion. Implied at integrality but not in the
+            # relaxation, where it stops the solver splitting a portion across
+            # fractional dishes — which is what made this slow to prove.
+            flex_slots = [
+                (p.name, d, meal)
+                for p in flexible_profiles
+                for d in prepared.days
+                for meal in prepared.shared_meal_types
+            ]
+            model.FLEX_SLOTS = Set(initialize=flex_slots, dimen=3)
+
+            def slot_share_total(m: Any, p: str, d: int, meal: str) -> Any:
+                return sum(
+                    m.share[p, r, d, meal]
+                    for r in prepared.recipes
+                    if prepared.allowed_meal[(r, meal)]
+                )
+
+            def slot_share_min(m: Any, p: str, d: int, meal: str) -> Any:
+                return slot_share_total(m, p, d, meal) >= portion_bounds[p][0]
+
+            def slot_share_max(m: Any, p: str, d: int, meal: str) -> Any:
+                return slot_share_total(m, p, d, meal) <= portion_bounds[p][1]
+
+            model.slot_share_min = Constraint(model.FLEX_SLOTS, rule=slot_share_min)
+            model.slot_share_max = Constraint(model.FLEX_SLOTS, rule=slot_share_max)
 
     snack_slot_set = set(prepared.snack_meal_types)
 
@@ -325,7 +413,7 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
             # let the solver max out scoops purely to fill the floor, which drove
             # protein far above target. It still counts toward the ceiling below.
             return (
-                sum(kcal[r] * _user_recipes_on_day(m, profile, r, d, prepared) for r in m.R)
+                sum(kcal[r] * _user_servings_on_day(m, profile, r, d, prepared) for r in m.R)
                 + m.slack_cal_min[p, d]
                 >= profile.calories_daily_min
             )
@@ -338,7 +426,7 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
         def cal_max_rule(m: Any, p: str, d: int) -> Any:
             profile = profiles_by_name[p]
             return (
-                sum(kcal[r] * _user_recipes_on_day(m, profile, r, d, prepared) for r in m.R)
+                sum(kcal[r] * _user_servings_on_day(m, profile, r, d, prepared) for r in m.R)
                 + _whey_kcal(m, p, d)
                 - m.slack_cal_max[p, d]
                 <= profile.calories_daily_max
@@ -355,7 +443,7 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
         def fiber_min_rule(m: Any, p: str, d: int) -> Any:
             profile = profiles_by_name[p]
             return (
-                sum(fiber[r] * _user_recipes_on_day(m, profile, r, d, prepared) for r in m.R)
+                sum(fiber[r] * _user_servings_on_day(m, profile, r, d, prepared) for r in m.R)
                 + m.slack_fiber_min[p, d]
                 >= profile.fiber_daily_min
             )
@@ -371,7 +459,7 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
         def protein_min_rule(m: Any, p: str, d: int) -> Any:
             profile = profiles_by_name[p]
             return (
-                sum(protein[r] * _user_recipes_on_day(m, profile, r, d, prepared) for r in m.R)
+                sum(protein[r] * _user_servings_on_day(m, profile, r, d, prepared) for r in m.R)
                 + _whey_protein(m, p, d)
                 + m.slack_protein_min[p, d]
                 >= profile.protein_daily_min
@@ -387,7 +475,7 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
         def protein_max_rule(m: Any, p: str, d: int) -> Any:
             profile = profiles_by_name[p]
             return (
-                sum(protein[r] * _user_recipes_on_day(m, profile, r, d, prepared) for r in m.R)
+                sum(protein[r] * _user_servings_on_day(m, profile, r, d, prepared) for r in m.R)
                 + _whey_protein(m, p, d)
                 - m.slack_protein_max[p, d]
                 <= profile.protein_daily_max
@@ -406,7 +494,7 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
 
         def weekly_cal_min(m: Any) -> Any:
             total = sum(
-                kcal_w[r] * _user_recipes_on_day(m, p, r, d, prepared)
+                kcal_w[r] * _user_servings_on_day(m, p, r, d, prepared)
                 for p in prepared.profiles
                 for r in m.R
                 for d in m.D
@@ -421,7 +509,7 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
 
         def weekly_cal_max(m: Any) -> Any:
             total = sum(
-                kcal_wm[r] * _user_recipes_on_day(m, p, r, d, prepared)
+                kcal_wm[r] * _user_servings_on_day(m, p, r, d, prepared)
                 for p in prepared.profiles
                 for r in m.R
                 for d in m.D
@@ -436,7 +524,7 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
 
         def weekly_fiber_min(m: Any) -> Any:
             total = sum(
-                fiber_w[r] * _user_recipes_on_day(m, p, r, d, prepared)
+                fiber_w[r] * _user_servings_on_day(m, p, r, d, prepared)
                 for p in prepared.profiles
                 for r in m.R
                 for d in m.D
@@ -451,7 +539,7 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
 
         def weekly_protein_min(m: Any) -> Any:
             total = sum(
-                protein_w[r] * _user_recipes_on_day(m, p, r, d, prepared)
+                protein_w[r] * _user_servings_on_day(m, p, r, d, prepared)
                 for p in prepared.profiles
                 for r in m.R
                 for d in m.D

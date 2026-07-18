@@ -151,6 +151,33 @@ def insert_plan_day_profile(
     )
 
 
+def insert_plan_meal_portion(
+    conn: Connection,
+    *,
+    plan_run_id: int,
+    day: int,
+    meal_type: str,
+    profile_id: int,
+    servings: Decimal | float,
+) -> None:
+    conn.execute(
+        text(
+            """
+            INSERT INTO meal_planning.plan_meal_portion
+                (plan_run_id, day, meal_type, profile_id, servings)
+            VALUES (:pr, :d, :m, :pid, :s)
+            """
+        ),
+        {
+            "pr": plan_run_id,
+            "d": day,
+            "m": meal_type,
+            "pid": profile_id,
+            "s": Decimal(str(servings)),
+        },
+    )
+
+
 def insert_plan_day(
     conn: Connection,
     *,

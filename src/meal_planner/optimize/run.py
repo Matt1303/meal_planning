@@ -108,6 +108,9 @@ class OptimizeResult:
     prepared: PreparedData
     # (profile_name, day) -> whey scoops the solver allocated.
     whey: dict[tuple[str, int], float] = field(default_factory=dict)
+    # (profile_name, day, shared meal_type) -> servings of that dish the person
+    # eats. Absent means the full serving (1.0).
+    portions: dict[tuple[str, int, str], float] = field(default_factory=dict)
 
 
 SHARED_KEY = "__shared__"
@@ -165,6 +168,7 @@ def optimize_plan(settings: Settings, *, engine: Engine | None = None) -> Optimi
         take = loaded and _plan_complete(plan, prepared)
         if take:
             whey = _extract_whey(model, prepared)
+            portions = _extract_portions(model, prepared)
             slack = total_slack(model, prepared)
             with eng.begin() as conn:
                 record_metric(
@@ -200,6 +204,7 @@ def optimize_plan(settings: Settings, *, engine: Engine | None = None) -> Optimi
                 relaxation_level=int(level),
                 prepared=prepared,
                 whey=whey,
+                portions=portions,
             )
         last_error = str(condition)
         log.warning("optimize.rejected", relaxation=level.name, condition=last_error)
@@ -311,6 +316,29 @@ def _extract_whey(model: Any, prepared: PreparedData) -> dict[tuple[str, int], f
             # Fractional scoops are fine — only include what's needed.
             if value is not None and float(value) > 0.05:
                 out[(p.name, d)] = round(float(value), 2)
+    return out
+
+
+def _extract_portions(model: Any, prepared: PreparedData) -> dict[tuple[str, int, str], float]:
+    """Per-person servings of each shared dish. Only profiles with a flexible
+    shared_portion range have a variable; the rest eat a full serving."""
+    out: dict[tuple[str, int, str], float] = {}
+    if not hasattr(model, "share"):
+        return out
+    for p in prepared.profiles:
+        if not p.portion_is_flexible:
+            continue
+        for d in prepared.days:
+            for meal in prepared.shared_meal_types:
+                total = 0.0
+                for r in prepared.recipes:
+                    if not prepared.allowed_meal[(r, meal)]:
+                        continue
+                    value = cast(Any, model.share[p.name, r, d, meal]).value
+                    if value is not None:
+                        total += float(value)
+                if total > 0:
+                    out[(p.name, d, meal)] = round(total, 3)
     return out
 
 
