@@ -31,7 +31,7 @@ def test_settings_loads_per_person_portions() -> None:
     settings = Settings.load("config/pipeline.yaml")
     specs = settings.optimizer.per_person_portions
     assert specs, "expected rice per-person portions configured"
-    rice = next(s for s in specs if "rice" in s.canonicals)
+    rice = next(s for s in specs if "cooked rice" in s.canonicals)
     assert isinstance(rice, PerPersonPortion)
     assert rice.value_as == "cooked rice"
     assert rice.estimated_only is True

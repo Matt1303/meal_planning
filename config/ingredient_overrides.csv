@@ -1,6 +1,6 @@
 raw_text,ingredient_canonical,food_group,note
 Instant Oats 80g,instant oats,Whole Grains,Matt's daily breakfast oats — distinct from jumbo/rolled oats
-Vegan Protein Powder 50g,vegan protein supplement,,Protein powder is not a Daily Dozen group; own canonical (the generic "vegan protein powder" was polluted)
+Vegan Protein Powder 50g,vegan protein supplement,,"Protein powder is not a Daily Dozen group; own canonical (the generic ""vegan protein powder"" was polluted)"
 Almond milk unsweetened 350ml,almond milk,,Plant milk is not a Daily Dozen group (was mislabelled Whole Grains)
 Frozen Berries 90g,mixed berries,Berries,Was missing its Daily Dozen group
 1 teaspoon baking powder,baking powder,,Was mis-matched to vegan protein powder + Whole Grains
@@ -12,3 +12,16 @@ Rolled oats 50g,oats,Whole Grains,Ellie's daily breakfast oats
 Soy milk 200ml,soy milk,,Plant milk is not a Daily Dozen group
 Blueberries 80g,blueberries,Berries,Ellie's breakfast topping
 Banana 100g,banana,Other Fruits,Ellie's breakfast topping
+"400 g cooked brown rice, for serving",cooked rice,Whole Grains,Cooked weight — dry rice values over-count ~2.8x
+"400 grams cooked and cooled brown rice, reserved from Gumbo recipe",cooked rice,Whole Grains,Cooked weight — dry rice values over-count ~2.8x
+500 g Cooked Brown Rice,cooked rice,Whole Grains,Cooked weight — dry rice values over-count ~2.8x
+500 g Cooked Brown Rice/ 200g uncooked,cooked rice,Whole Grains,Grams given are the cooked weight
+500 g Microwave Rice,cooked rice,Whole Grains,Microwave pouches are pre-cooked
+cooked basmati rice,cooked rice,Whole Grains,Cooked weight — dry rice values over-count ~2.8x
+"Cooked brown rice, to serve",cooked rice,Whole Grains,Cooked weight — dry rice values over-count ~2.8x
+To serve Cooked Rice,cooked rice,Whole Grains,Cooked weight — dry rice values over-count ~2.8x
+Rice,cooked rice,Whole Grains,Served portion — 250 g default is a cooked weight
+To serve Rice,cooked rice,Whole Grains,Served portion — 250 g default is a cooked weight
+Wholegrain rice,cooked rice,Whole Grains,Served portion — 250 g default is a cooked weight
+Jasmine rice,cooked rice,Whole Grains,Served portion — 250 g default is a cooked weight
+"Two 400 gram cans brown lentils, drained and rinsed","lentils: brown, green, red",Beans,"Fuzzy-matched 'brown rice' on the word brown — 362 vs 116 kcal/100g, and Grains not Beans"

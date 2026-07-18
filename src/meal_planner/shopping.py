@@ -155,8 +155,9 @@ def build_shopping_list(
         {"pr": plan_run_id, "people": int(people)},
     ).fetchall()
 
-    # Grams are treated as raw/uncooked purchase weights, except cooked default
-    # portions (e.g. rice), which are converted to their raw weight for shopping.
+    # Grams are treated as raw/uncooked purchase weights, except canonicals that
+    # are inherently a cooked weight (e.g. cooked rice), which convert to the raw
+    # weight you buy.
     cooked_ratio: dict[str, float] = {}
     for spec in settings.optimizer.per_person_portions:
         if spec.cooked_to_raw_ratio:
@@ -174,10 +175,9 @@ def build_shopping_list(
             continue
         key = _singularize(name)
         g = float(grams) if grams is not None else 0.0
-        if portion_estimated:
-            ratio = cooked_ratio.get(name.strip().lower())
-            if ratio:
-                g /= ratio
+        ratio = cooked_ratio.get(name.strip().lower())
+        if ratio:
+            g /= ratio
         merged_grams[key] = merged_grams.get(key, 0.0) + g
         if merged_group.get(key) is None and food_group is not None:
             merged_group[key] = str(food_group)

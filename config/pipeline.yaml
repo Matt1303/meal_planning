@@ -112,14 +112,15 @@ optimizer:
   fiber_weekly_min: null
   weekly_group_portions_min: {}
   include_non_plant: false
-  # Per-person serving sizes that override the shared per-serving amount for
-  # rice. Matt eats 400 g cooked rice per meal, Ellie 200 g. Only applies to
-  # no-quantity ("to serve") rice lines (estimated_only); recipe-specified rice
-  # weights are left as-is. value_as values these cooked-weight portions with
-  # cooked-rice calories (the dry rice canonicals would over-count ~2.7x).
+  # Cooked-weight rice lines resolve to the "cooked rice" canonical (see
+  # ingredient_overrides.csv), which is valued at cooked calories. For the
+  # shopping list those cooked weights convert back to the dry weight you
+  # actually buy, hence the 3:1 ratio.
+  # NB: the per-person grams below are no longer applied to nutrition — each
+  # person's share of a dish now comes from household.shared_portion_min/max,
+  # which scales the whole meal rather than rice alone.
   per_person_portions:
-    - canonicals:
-        [rice, white rice, brown rice, wholegrain rice, basmati rice, jasmine rice, sushi rice]
+    - canonicals: [cooked rice]
       value_as: cooked rice
       estimated_only: true
       cooked_to_raw_ratio: 3

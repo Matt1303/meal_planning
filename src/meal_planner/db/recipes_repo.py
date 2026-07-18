@@ -108,6 +108,23 @@ def replace_meal_types(conn: Connection, *, recipe_id: int, meal_types: list[str
 
 
 def insert_raw_ingredient_lines(conn: Connection, *, recipe_id: int, lines: list[str]) -> int:
+    """Sync a recipe's raw ingredient lines to `lines`.
+
+    Rows still present keep their enrichment (canonical, grams, nutrition); rows
+    for lines the recipe no longer has are removed. Without the prune, editing a
+    recipe left the old line behind and both kept counting — one traybake curry
+    carried two rice lines and 1,230 kcal of rice a serving.
+    """
+    if lines:
+        conn.execute(
+            text(
+                """
+                DELETE FROM meal_planning.recipe_ingredient
+                WHERE recipe_id = :rid AND raw_text <> ALL(:keep)
+                """
+            ),
+            {"rid": recipe_id, "keep": lines},
+        )
     inserted = 0
     for line in lines:
         result = conn.execute(
