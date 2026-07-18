@@ -107,7 +107,7 @@ class OptimizeResult:
     relaxation_level: int
     prepared: PreparedData
     # (profile_name, day) -> whey scoops the solver allocated.
-    whey: dict[tuple[str, int], int] = field(default_factory=dict)
+    whey: dict[tuple[str, int], float] = field(default_factory=dict)
 
 
 SHARED_KEY = "__shared__"
@@ -301,15 +301,16 @@ def _plan_complete(plan: dict[int, dict[str, PlanCell]], prepared: PreparedData)
     return True
 
 
-def _extract_whey(model: Any, prepared: PreparedData) -> dict[tuple[str, int], int]:
-    out: dict[tuple[str, int], int] = {}
+def _extract_whey(model: Any, prepared: PreparedData) -> dict[tuple[str, int], float]:
+    out: dict[tuple[str, int], float] = {}
     if not hasattr(model, "whey"):
         return out
     for p in prepared.profiles:
         for d in prepared.days:
             value = cast(Any, model.whey[p.name, d]).value
-            if value is not None and value > 0.5:
-                out[(p.name, d)] = round(float(value))
+            # Fractional scoops are fine — only include what's needed.
+            if value is not None and float(value) > 0.05:
+                out[(p.name, d)] = round(float(value), 2)
     return out
 
 

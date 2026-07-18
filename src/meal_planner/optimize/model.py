@@ -320,9 +320,12 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
 
         def cal_min_rule(m: Any, p: str, d: int) -> Any:
             profile = profiles_by_name[p]
+            # Whey deliberately does NOT count toward the calorie floor: it is a
+            # protein supplement, not a way to make up calories. Counting it here
+            # let the solver max out scoops purely to fill the floor, which drove
+            # protein far above target. It still counts toward the ceiling below.
             return (
                 sum(kcal[r] * _user_recipes_on_day(m, profile, r, d, prepared) for r in m.R)
-                + _whey_kcal(m, p, d)
                 + m.slack_cal_min[p, d]
                 >= profile.calories_daily_min
             )

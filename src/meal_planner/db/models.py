@@ -286,7 +286,7 @@ class PlanDayProfile(Base):
     protein_g: Mapped[Decimal | None] = mapped_column(Numeric)
     fat_g: Mapped[Decimal | None] = mapped_column(Numeric)
     carbs_g: Mapped[Decimal | None] = mapped_column(Numeric)
-    whey_scoops: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    whey_scoops: Mapped[Decimal] = mapped_column(Numeric, nullable=False, default=0)
 
 
 class PlanDay(Base):

@@ -163,7 +163,7 @@ def write_plan(settings: Settings, result: OptimizeResult, *, engine: Engine | N
                         totals[i] += v
                 # Whey the solver allocated for this person/day (kcal, fibre,
                 # protein, fat, carbs).
-                scoops = result.whey.get((profile_name, day), 0)
+                scoops = result.whey.get((profile_name, day), 0.0)
                 if scoops:
                     for i, per_scoop in enumerate(
                         (

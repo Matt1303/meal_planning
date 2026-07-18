@@ -345,10 +345,12 @@ def _meal_dozen(lines: list[IngredientLine], dozen_groups: set[str]) -> dict[str
     return dict(out)
 
 
-def _whey_meal(topup: TopUpSettings, scoops: int) -> MealEntry:
+def _whey_meal(topup: TopUpSettings, scoops: float) -> MealEntry:
+    shown = f"{scoops:.0f}" if abs(scoops - round(scoops)) < 0.05 else f"{scoops:.1f}"
+    grams = scoops * topup.whey_scoop_grams
     return MealEntry(
         meal_type="topup",
-        title=f"{topup.whey_label} — {scoops} scoop{'s' if scoops != 1 else ''}",
+        title=f"{topup.whey_label} — {shown} scoop{'' if shown == '1' else 's'}",
         recipe_id=None,
         kcal=scoops * topup.whey_kcal,
         fiber_g=scoops * topup.whey_fiber_g,
@@ -357,7 +359,7 @@ def _whey_meal(topup: TopUpSettings, scoops: int) -> MealEntry:
         carbs_g=scoops * topup.whey_carbs_g,
         is_topup=True,
         detail=(
-            f"{scoops} × {topup.whey_scoop_grams:.0f} g scoop with water "
+            f"{shown} × {topup.whey_scoop_grams:.0f} g scoop ({grams:.0f} g) with water "
             f"(+{scoops * topup.whey_protein_g:.0f} g protein) — allocated by the optimiser"
         ),
     )
@@ -527,12 +529,12 @@ def load_plan_view(
     # Targets the plan was actually built with (from user_profile), so a loaded
     # plan's shortfall + top-ups match its own targets, not the current config.
     stored_targets: dict[int, ProfileTargets] = {}
-    whey_by_day_profile: dict[tuple[int, int], int] = {}
+    whey_by_day_profile: dict[tuple[int, int], float] = {}
     for row in day_profile_rows:
         pid = int(row[1])
         profile_id_to_name[pid] = str(row[2])
         profile_id_to_display[pid] = str(row[3])
-        whey_by_day_profile[(int(row[0]), pid)] = int(row[14] or 0)
+        whey_by_day_profile[(int(row[0]), pid)] = float(row[14] or 0)
         if pid not in stored_targets and any(v is not None for v in row[9:14]):
             stored_targets[pid] = ProfileTargets(
                 name=str(row[2]),
@@ -575,8 +577,8 @@ def load_plan_view(
 
             # Whey the optimiser allocated for this person/day (protein within
             # the calorie band) — show it as a meal so totals reconcile.
-            scoops = whey_by_day_profile.get((day_int, profile_id), 0)
-            if scoops > 0 and topup_cfg.enabled:
+            scoops = whey_by_day_profile.get((day_int, profile_id), 0.0)
+            if scoops > 0.05 and topup_cfg.enabled:
                 combined.append(_whey_meal(topup_cfg, scoops))
 
             day_dozen: dict[str, set[str]] = defaultdict(set)

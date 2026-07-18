@@ -126,7 +126,7 @@ def insert_plan_day_profile(
     protein_g: Decimal | float,
     fat_g: Decimal | float,
     carbs_g: Decimal | float,
-    whey_scoops: int = 0,
+    whey_scoops: Decimal | float = 0,
 ) -> None:
     conn.execute(
         text(
@@ -146,7 +146,7 @@ def insert_plan_day_profile(
             "p": Decimal(str(protein_g)),
             "ft": Decimal(str(fat_g)),
             "c": Decimal(str(carbs_g)),
-            "w": whey_scoops,
+            "w": Decimal(str(whey_scoops)),
         },
     )
 

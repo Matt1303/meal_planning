@@ -127,7 +127,7 @@ class OptimizerSettings(BaseModel):
     protein_daily_min: int | None = None
     protein_daily_max: int | None = None
     snack_optional: bool = False
-    max_snacks_per_day: int = Field(default=1, ge=1, le=5)
+    max_snacks_per_day: int = Field(default=1, ge=1, le=8)
     # category (case-insensitive substring of recipe categories) -> max snacks
     # of that category per day, e.g. {"smoothie": 1}.
     snack_category_limits: dict[str, int] = Field(default_factory=dict)
