@@ -627,10 +627,18 @@ def parse_ingredients(settings: Settings, *, engine: Engine | None = None) -> in
         # Recipes that write anything in mixed case; an ALL CAPS line in one of
         # those is a heading rather than an ingredient.
         mixed_case_recipes = {rid for rid, raw, _ in rows if any(ch.islower() for ch in raw)}
+        declared_headers = load_declared_headers(settings.parse.section_headers_path)
+        titles = {
+            int(rid): str(title)
+            for rid, title in conn.execute(
+                text("SELECT recipe_id, title FROM meal_planning.recipe")
+            ).fetchall()
+        }
 
         for recipe_id, raw_text, servings_count in rows:
             total += 1
-            if _is_section_header(raw_text, recipe_id in mixed_case_recipes):
+            declared = (titles.get(recipe_id, ""), raw_text) in declared_headers
+            if declared or _is_section_header(raw_text, recipe_id in mixed_case_recipes):
                 headers += 1
                 pending.append((_header_update(recipe_id, raw_text), None))
                 continue
@@ -757,6 +765,28 @@ _HEADER_PHRASES = frozenset(
         "ingredients",
     }
 )
+
+
+def load_declared_headers(path: Path) -> set[tuple[str, str]]:
+    """(recipe_title, raw_text) pairs classified by review as not-an-ingredient.
+
+    Covers what no line-by-line rule can: mixed-case component headings
+    ("Polenta", "Quick Ragu") and continuation fragments left by the exporter
+    splitting a line ("based linguine"). Both contribute nothing — a heading has
+    no food, and a fragment's quantity is already counted on its parent line.
+    """
+    import csv
+
+    if not path.exists():
+        return set()
+    out: set[tuple[str, str]] = set()
+    with path.open(newline="") as fh:
+        for row in csv.DictReader(fh):
+            title = (row.get("recipe_title") or "").strip()
+            raw = (row.get("raw_text") or "").strip()
+            if title and raw:
+                out.add((title, raw))
+    return out
 
 
 def _is_section_header(raw_text: str, recipe_has_mixed_case: bool) -> bool:

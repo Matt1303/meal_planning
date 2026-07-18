@@ -50,6 +50,9 @@ class ParseSettings(BaseModel):
     # Substring rules (e.g. any "whey protein" line), applied before fuzzy matching
     # so descriptive words (flavours, brands) can't hijack the canonical.
     contains_rules_path: Path = Path("config/ingredient_contains_rules.csv")
+    # Reviewed (recipe, line) pairs that are section headings or continuation
+    # fragments rather than ingredients — see load_declared_headers.
+    section_headers_path: Path = Path("config/section_headers.csv")
 
 
 class NutritionSettings(BaseModel):

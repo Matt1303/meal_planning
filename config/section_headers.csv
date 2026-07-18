@@ -1,0 +1,45 @@
+recipe_title,raw_text,kind,note
+Buffalo Chickpea Salad,Sweet Hummus Dressing,heading,Was matching sweet potatoes at 129 kcal
+Buffalo Chickpea Salad,Buffalo Chickpeas,heading,Was matching chickpeas at 111 kcal
+Buffalo Chickpea Salad,Salad,heading,Was matching garam masala
+Chilli Mac,Easy Cheese Sauce,heading,
+Chilli Mac,Chili Mac,heading,Recipe name repeated as a section label
+Chickpea Meatballs,Pasta Marinara,heading,Serving-variant label
+Chickpea Meatballs,Sandwich,heading,Serving-variant label
+Creamy Coriander Salad,Creamy Coriander Sauce,heading,
+Creamy Coriander Salad,For Salad,heading,
+Cocoa 'Nana Smoothie Bowl,Peanut butter drizzle,heading,Was matching butter beans at 82 kcal
+Plant-Powered Polenta Ragu,Quick Ragu,heading,
+Plant-Powered Polenta Ragu,Polenta,heading,The real polenta is the cornmeal line below it
+Lentil Masala,Coriander-Lime Rice,heading,
+Lentil Masala,Lentils,heading,
+Lentil Masala,Cashew Cream,heading,Was matching cashews at 166 kcal on top of the cashew line below
+Lentil-Walnut Tacos / Sweet Potatoes,Sweet Potatoes,heading,Duplicates the quantified sweet potato line
+Lentil-Walnut Tacos / Sweet Potatoes,Tacos,heading,Serving-variant label
+Lentil-Walnut Tacos / Sweet Potatoes,Stuffed Taco Sweet Potatoes,heading,Serving-variant label
+Mediterranean Grain Salad,Mediterranean Grain Salad,heading,Recipe title repeated as first line
+Mediterranean Grain Salad,Zesty Lemon Dressing,heading,
+Sesame Noodle Meal Prep Bowl,Sesame Dressing,heading,
+Sesame Noodle Meal Prep Bowl,Sesame Noodle Bowls,heading,Was matching sesame seeds at 57 kcal
+Pesto Pasta,Rocket-Walnut Pesto,heading,
+Sunday Pasta,Roasted Tomatoes,heading,
+Sunday Pasta,Tempeh Sausage,heading,Was matching tempeh at 193 kcal on top of the tempeh line below
+Sunday Pasta,Rocket-Lemon Pesto,heading,
+"Sunday Pasta","Cashew cream (optional), for serving",heading,Was matching cashews at 166 kcal
+Spicy Tofu Tacos,Cherry Tomato Salsa,heading,
+Spicy Tofu Tacos,Spicy Tofu Taco Filling,heading,Was matching tofu at 94 kcal
+The Daily Salad,Salad,heading,
+The Daily Salad,Oil-Free Orange Dressing,heading,
+Thai Rainbow Bowls with Peanut Tofu,Spicy Peanut Sauce,heading,
+"Tomato Risotto with Saffron","Seared Prawns (optional, see notes)",heading,
+Miso Mushroom Bean Bowl,For The Miso Cashew Cream:,heading,
+Cauliflower Alfredo Linguine With Roasted Asparagus,based linguine,continuation,Tail of the line above; the 225 g is already counted there
+Beans & Greens Quesadillas,"red kale, finely chopped",continuation,Tail of the chard line above
+Biome Stock Pho,to drizzle in the pan,continuation,Tail of the oil line above
+Biome Stock Pho,only) and/or jalapeño peppers,continuation,Tail of the spring onion line above
+Biome Stock Pho,Supercharge It!,heading,
+Chickpea Meatballs,"yellow light,GOS)",continuation,Tail of the chickpea line above
+Creamy Courgette Beanotto,"hard cheese, plus extra to serve",continuation,Tail of the parmesan line above
+Matcha Latte,have better flavour than culinary matcha),continuation,Tail of the matcha line above
+Weeknight Minestrone Soup,vegetable stock,continuation,Tail of the Biome broth line above
+Miso Biome Sipper,Made from Biome Broth.,heading,Prose rather than an ingredient
