@@ -611,6 +611,7 @@ def parse_ingredients(settings: Settings, *, engine: Engine | None = None) -> in
     cached_count = 0
     llm_used = 0
     llm_invalid = 0
+    headers = 0
 
     with eng.begin() as conn:
         seeded = _seed_ingredient_overrides(conn, settings.parse.overrides_path)
@@ -623,8 +624,16 @@ def parse_ingredients(settings: Settings, *, engine: Engine | None = None) -> in
         pending: list[tuple[ParseUpdate, str | None]] = []
         llm_inputs: list[tuple[str, ParseUpdate]] = []
 
+        # Recipes that write anything in mixed case; an ALL CAPS line in one of
+        # those is a heading rather than an ingredient.
+        mixed_case_recipes = {rid for rid, raw, _ in rows if any(ch.islower() for ch in raw)}
+
         for recipe_id, raw_text, servings_count in rows:
             total += 1
+            if _is_section_header(raw_text, recipe_id in mixed_case_recipes):
+                headers += 1
+                pending.append((_header_update(recipe_id, raw_text), None))
+                continue
             cache = fetch_cache(conn, raw_text)
             base = _from_cache_or_compute(
                 cache,
@@ -684,6 +693,7 @@ def parse_ingredients(settings: Settings, *, engine: Engine | None = None) -> in
 
     log.info(
         "parse.complete",
+        headers=headers,
         total=total,
         cached=cached_count,
         llm_used=llm_used,
@@ -730,6 +740,64 @@ def _from_cache_or_compute(
         quantity_unit=qty_unit,
         quantity_grams=grams,
         food_group=food_group,
+    )
+
+
+_HEADER_PHRASES = frozenset(
+    {
+        "to serve",
+        "to garnish",
+        "toppings",
+        "topping",
+        "garnish",
+        "optional",
+        "optional toppings",
+        "for serving",
+        "method",
+        "ingredients",
+    }
+)
+
+
+def _is_section_header(raw_text: str, recipe_has_mixed_case: bool) -> bool:
+    """True for lines that label a section rather than name an ingredient.
+
+    Paprika exports these as ordinary ingredient lines, so without this they get
+    fuzzy-matched and charged a default portion — a bare "LINGUINE" heading was
+    costing 704 kcal on top of the pasta line it introduced.
+    """
+    text = raw_text.strip()
+    if not text:
+        return True
+    if text.endswith(":"):
+        return True
+    if text.rstrip(":").strip().lower() in _HEADER_PHRASES:
+        return True
+    # ALL CAPS with no quantity, e.g. "ALFREDO SAUCE". Only trusted when the
+    # recipe writes its real ingredients in mixed case, so a recipe typed
+    # entirely in capitals doesn't lose every line.
+    return (
+        recipe_has_mixed_case
+        and not any(ch.isdigit() for ch in text)
+        and any(ch.isalpha() for ch in text)
+        and text == text.upper()
+    )
+
+
+def _header_update(recipe_id: int, raw_text: str) -> ParseUpdate:
+    """A header contributes no food, so every nutrition-bearing field is null."""
+    return ParseUpdate(
+        recipe_id=recipe_id,
+        raw_text=raw_text,
+        ingredient_name=None,
+        ingredient_canonical=None,
+        quantity_value=None,
+        quantity_unit=None,
+        quantity_grams=None,
+        per_serving_grams=None,
+        food_group=None,
+        portions=None,
+        portion_met=False,
     )
 
 

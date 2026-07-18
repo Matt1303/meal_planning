@@ -5,6 +5,7 @@ from decimal import Decimal
 import pytest
 
 from meal_planner.parse import (
+    _is_section_header,
     _preprocess_fraction_words,
     _primary_clause,
     _quantulum_then_regex,
@@ -110,3 +111,43 @@ def test_regex_parse_simple_fraction() -> None:
 def test_regex_parse_none() -> None:
     qty, unit = regex_parse_quantity("a pinch of salt")
     assert qty is None or unit is not None
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "LINGUINE",
+        "ASPARAGUS",
+        "TO SERVE",
+        "FOR THE BASIL SALSA VERDE",
+        "For The Tofu Feta:",
+        "Toppings:",
+        "To Serve:",
+        "Optional",
+    ],
+)
+def test_section_headers_detected(raw: str) -> None:
+    assert _is_section_header(raw, recipe_has_mixed_case=True)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "To serve Cooked Rice",
+        "To serve Toasted Sourdough",
+        "400 g cooked brown rice, for serving",
+        "Olive Oil",
+        "Salt and freshly ground black pepper",
+        "Chopped parsley, to serve",
+    ],
+)
+def test_real_ingredients_are_not_headers(raw: str) -> None:
+    assert not _is_section_header(raw, recipe_has_mixed_case=True)
+
+
+@pytest.mark.unit
+def test_all_caps_recipe_keeps_its_ingredients() -> None:
+    # A recipe typed entirely in capitals must not lose every line.
+    assert not _is_section_header("LINGUINE", recipe_has_mixed_case=False)
