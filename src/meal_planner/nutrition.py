@@ -9,7 +9,7 @@ from typing import Any
 import pandas as pd
 import requests
 from rapidfuzz import fuzz, process
-from sqlalchemy import Connection, Engine
+from sqlalchemy import Connection, Engine, text
 
 from meal_planner.config import Settings
 from meal_planner.correlation import current_correlation_id
@@ -886,6 +886,47 @@ def _decimal_or_none_str(value: str) -> Decimal | None:
         return None
 
 
+# Above these kcal/100g a whole food is almost certainly stored in a dried,
+# powdered or otherwise concentrated form — fresh mushrooms cached at 333 (vs
+# 22), fresh cranberries at the dried 325. Deliberately generous: dates and
+# avocado are legitimately dense, so this flags for review, never rewrites.
+IMPLAUSIBLE_KCAL_BY_GROUP: dict[str, int] = {
+    "Greens": 120,
+    "Other Vegetables": 130,
+    "Cruciferous Vegetables": 120,
+    "Berries": 180,
+    "Other Fruits": 300,
+    "Beans": 400,
+}
+
+
+def implausible_cached_values(conn: Connection) -> list[tuple[str, Decimal, str]]:
+    """Cached per-100g figures too high for their food group to be a fresh form.
+
+    Returns (canonical, kcal_per_100g, food_group). These are reported, not
+    corrected: the fix is an authoritative row in nutrition_overrides.csv, since
+    only a human can say whether a value is wrong or the food is just dense.
+    """
+    rows = conn.execute(
+        text(
+            """
+            SELECT DISTINCT c.ingredient_canonical, c.kcal_per_100g, ri.food_group
+            FROM meal_planning.ingredient_nutrition_cache c
+            JOIN meal_planning.recipe_ingredient ri
+              ON ri.ingredient_canonical = c.ingredient_canonical
+            WHERE c.source <> 'manual' AND c.kcal_per_100g IS NOT NULL
+              AND ri.food_group IS NOT NULL
+            """
+        )
+    ).fetchall()
+    flagged: list[tuple[str, Decimal, str]] = []
+    for canonical, kcal, group in rows:
+        ceiling = IMPLAUSIBLE_KCAL_BY_GROUP.get(str(group))
+        if ceiling is not None and Decimal(kcal) > ceiling:
+            flagged.append((str(canonical), Decimal(kcal), str(group)))
+    return sorted(flagged, key=lambda r: -r[1])
+
+
 def apply_nutrition_overrides(conn: Connection, path: Path) -> int:
     """Seed authoritative manual per-100g nutrition (e.g. packet labels) into the
     cache so it wins over LLM/OFF lookups and survives a cache wipe / refresh."""
@@ -1119,6 +1160,16 @@ def enrich_nutrition(
             coverage,
             correlation_id=correlation_id,
         )
+
+    with eng.begin() as conn:
+        for canonical, kcal, group in implausible_cached_values(conn):
+            log.warning(
+                "nutrition.implausible_value",
+                ingredient=canonical,
+                kcal_per_100g=float(kcal),
+                food_group=group,
+                hint="likely a dried/powdered figure — add a row to nutrition_overrides.csv",
+            )
 
     log.info("nutrition.complete", total=total, covered=covered, coverage=coverage)
 
