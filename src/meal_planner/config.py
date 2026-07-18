@@ -132,6 +132,9 @@ class OptimizerSettings(BaseModel):
     # of that category per day, e.g. {"smoothie": 1}.
     snack_category_limits: dict[str, int] = Field(default_factory=dict)
     max_recipe_repeats: int = Field(default=2, ge=1)
+    # MILP backend. appsi_highs (HiGHS) is far faster than glpk on this model;
+    # falls back to glpk automatically if the preferred solver isn't installed.
+    solver: str = "appsi_highs"
     solver_time_limit: int = Field(default=300, gt=0)
     solver_mip_gap: float = Field(default=0.05, ge=0, le=1)
     planning_horizon_days: int = Field(default=8, ge=1, le=30)

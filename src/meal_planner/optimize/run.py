@@ -6,7 +6,6 @@ from enum import IntEnum
 from typing import Any, cast
 
 from pyomo.environ import SolverFactory
-from pyomo.opt import SolverResults, TerminationCondition
 from sqlalchemy import Engine
 
 from meal_planner.config import Settings
@@ -145,42 +144,25 @@ def optimize_plan(settings: Settings, *, engine: Engine | None = None) -> Optimi
             correlation_id=correlation_id,
         )
 
+    solver_name = _resolve_solver_name(settings.optimizer.solver)
     last_error: str = "not attempted"
     for level, options in _LEVELS:
-        log.info("optimize.attempt", level=level.name)
+        log.info("optimize.attempt", relaxation=level.name, solver=solver_name)
         model = build_model(prepared, settings, options)
-        solver = SolverFactory("glpk")
-        if settings.optimizer.solver_time_limit:
-            try:
-                solver.options["tmlim"] = int(settings.optimizer.solver_time_limit)
-            except Exception:
-                pass
-        try:
-            solver.options["mipgap"] = float(settings.optimizer.solver_mip_gap)
-        except Exception:
-            pass
         start = time.time()
         try:
-            res: SolverResults = solver.solve(model, tee=False)
+            condition, loaded = _solve_model(model, solver_name, settings)
         except Exception as exc:
             last_error = str(exc)
-            log.warning("optimize.solver_error", level=level.name, error=last_error)
+            log.warning("optimize.solver_error", relaxation=level.name, error=last_error)
             continue
         seconds = time.time() - start
-        condition = res.solver.termination_condition
-        accepted = {
-            TerminationCondition.optimal,
-            TerminationCondition.feasible,
-            TerminationCondition.locallyOptimal,
-            TerminationCondition.globallyOptimal,
-        }
-        plan = _extract_plan(model, prepared)
-        # The nutrition constraints are soft (slack), so the strict level is always
-        # feasible — if the solver hits the time limit with a complete incumbent,
-        # keep it rather than relaxing away the calorie/protein targets.
-        take = condition in accepted or (
-            condition == TerminationCondition.maxTimeLimit and _plan_complete(plan, prepared)
-        )
+        # The nutrition constraints are soft (slack), so any level is feasible in
+        # principle. Accept whatever the solver loaded as long as it is a complete
+        # plan — including a time-limited incumbent — rather than relaxing the
+        # calorie/protein targets away.
+        plan = _extract_plan(model, prepared) if loaded else {}
+        take = loaded and _plan_complete(plan, prepared)
         if take:
             whey = _extract_whey(model, prepared)
             slack = total_slack(model, prepared)
@@ -205,9 +187,10 @@ def optimize_plan(settings: Settings, *, engine: Engine | None = None) -> Optimi
                 )
             log.info(
                 "optimize.solved",
-                level=level.name,
+                relaxation=level.name,
                 seconds=seconds,
                 slack_total=slack,
+                condition=condition,
             )
             return OptimizeResult(
                 plan=plan,
@@ -219,7 +202,7 @@ def optimize_plan(settings: Settings, *, engine: Engine | None = None) -> Optimi
                 whey=whey,
             )
         last_error = str(condition)
-        log.warning("optimize.infeasible", level=level.name, condition=last_error)
+        log.warning("optimize.rejected", relaxation=level.name, condition=last_error)
 
     raise RuntimeError(f"all relaxation levels failed: {last_error}")
 
@@ -244,6 +227,61 @@ def _maybe_force_snack_optional(
             update={"optimizer": settings.optimizer.model_copy(update={"snack_optional": True})}
         )
     return settings
+
+
+def _resolve_solver_name(preferred: str) -> str:
+    """Use the preferred MILP backend if installed, else fall back to glpk."""
+    try:
+        if SolverFactory(preferred).available(False):
+            return preferred
+    except Exception:
+        pass
+    log.warning("optimize.solver_unavailable", preferred=preferred, fallback="glpk")
+    return "glpk"
+
+
+def _termination_of(results: Any) -> str:
+    """Termination condition across Pyomo's legacy and APPSI result objects."""
+    legacy = getattr(getattr(results, "solver", None), "termination_condition", None)
+    if legacy is not None:
+        return str(legacy)
+    return str(getattr(results, "termination_condition", "unknown"))
+
+
+def _solve_model(model: Any, solver_name: str, settings: Settings) -> tuple[str, bool]:
+    """Solve with either an APPSI backend (HiGHS) or a legacy shell solver (glpk).
+
+    Returns (termination condition, whether a solution was loaded onto the model).
+    """
+    time_limit = settings.optimizer.solver_time_limit
+    gap = settings.optimizer.solver_mip_gap
+    if solver_name.startswith("appsi_"):
+        solver = SolverFactory(solver_name)
+        solver.config.time_limit = float(time_limit)
+        solver.config.mip_gap = float(gap)
+        # Load manually so a time-limited incumbent isn't discarded.
+        solver.config.load_solution = False
+        # config alone doesn't bind for HiGHS — set its native options too.
+        native = getattr(solver, "highs_options", None)
+        if native is not None:
+            native["time_limit"] = float(time_limit)
+            native["mip_rel_gap"] = float(gap)
+        results = solver.solve(model)
+        condition = _termination_of(results)
+        try:
+            solver.load_vars()
+        except Exception:
+            return condition, False
+        return condition, True
+
+    solver = SolverFactory(solver_name)
+    try:
+        solver.options["tmlim"] = int(time_limit)
+        solver.options["mipgap"] = float(gap)
+    except Exception:
+        pass
+    results = solver.solve(model, tee=False)
+    return _termination_of(results), True
 
 
 def _plan_complete(plan: dict[int, dict[str, PlanCell]], prepared: PreparedData) -> bool:
