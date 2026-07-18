@@ -460,6 +460,18 @@ def _quantulum_then_regex(raw: str, errors: list[int]) -> tuple[Decimal | None, 
     return qty_value, qty_unit
 
 
+def group_for_canonical(canonical: str | None, ctx: ParseContext) -> str | None:
+    """Daily Dozen group for a canonical, from the food list (via synonyms).
+
+    The food list is the single authority for what *is* a Daily Dozen food, so
+    anything not in it (salt, oils, stocks, meat, condiments) gets no group.
+    """
+    if not canonical:
+        return None
+    key = normalize_text(canonical)
+    return ctx.food_groups.get(key) or ctx.food_groups.get(ctx.synonyms.get(key, key))
+
+
 def _resolve_canonical(
     raw: str, ingredient_name: str, ctx: ParseContext
 ) -> tuple[str | None, str | None]:
@@ -802,7 +814,10 @@ def _run_llm_batches(
             canonical = (
                 normalize_text(ingredient_name) if ingredient_name else update.ingredient_canonical
             )
-            food_group = parsed.food_group or update.food_group
+            # Derive the group from the canonical (food list), not the LLM's
+            # per-line guess — otherwise the same ingredient gets different
+            # groups on different lines (e.g. olive oil as Nuts and Seeds).
+            food_group = group_for_canonical(canonical, ctx)
             quantity_value = parsed.quantity_value or update.quantity_value
             quantity_unit = parsed.quantity_unit or update.quantity_unit
             grams = (

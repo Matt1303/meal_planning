@@ -24,6 +24,16 @@ Butter beans
 Marrowfat peas
 Borlotti beans
 Puy lentils
+Tofu
+Firm tofu
+Extra-firm tofu
+Silken tofu
+Tempeh
+Edamame
+Frozen edamame
+Miso
+Miso paste
+White miso
 
 Berries
 
@@ -84,6 +94,9 @@ Star fruit
 Tangerine
 Watermelon
 Sharon fruit
+Avocado
+Tomato
+Cherry tomatoes
 
 Cruciferous Vegetables
 
@@ -124,6 +137,9 @@ Romaine
 Spinach
 Swiss chard
 Purslane
+Rocket
+Pak choi
+Cavolo nero
 
 Other Vegetables
 
@@ -200,6 +216,23 @@ Wax beans
 Winter squash
 Yams
 Yucca
+Onion
+White onion
+Red onion
+Spring onion
+Carrot
+Potato
+Potatoes
+Maris piper potatoes
+Leek
+Courgettes
+Courgette
+Aubergines
+Aubergine
+Jalapeno
+Jalapeños
+Pickled jalapeños
+Kimchi
 
 Flaxseeds or Linseeds
 
@@ -230,6 +263,10 @@ Pumpkin seeds
 Sesame seeds
 Sunflower seeds
 Walnuts
+Tahini
+Peanut butter
+Almond butter
+Cashew butter
 
 Herbs and Spices
 
@@ -270,6 +307,16 @@ Thyme
 Vanilla
 Wasabi
 Zaatar
+Turmeric
+Ground turmeric
+Chilli flakes
+Chili flakes
+Garam masala
+Curry powder
+Curry leaves
+Smoked paprika
+Chipotle
+Harissa
 
 Whole Grains
 
@@ -292,3 +339,18 @@ Wild rice
 Whole wheat pasta
 Whole wheat flour
 Granola
+Linguine
+Orzo
+Rigatoni
+Spaghetti
+Macaroni
+Fusilli
+Soba noodles
+Udon noodles
+Rice noodles
+Egg noodles
+Sourdough bread
+Bread
+Cooked rice
+Couscous
+Bulgur wheat
