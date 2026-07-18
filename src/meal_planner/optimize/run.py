@@ -320,13 +320,21 @@ def _extract_whey(model: Any, prepared: PreparedData) -> dict[tuple[str, int], f
 
 
 def _extract_portions(model: Any, prepared: PreparedData) -> dict[tuple[str, int, str], float]:
-    """Per-person servings of each shared dish. Only profiles with a flexible
-    shared_portion range have a variable; the rest eat a full serving."""
+    """Per-person servings of each shared dish.
+
+    Profiles on a fixed portion have no variable — their share is the configured
+    multiplier, reported here so macros, the plan view and the shopping list all
+    read servings from one place.
+    """
     out: dict[tuple[str, int, str], float] = {}
-    if not hasattr(model, "share"):
-        return out
     for p in prepared.profiles:
         if not p.portion_is_flexible:
+            if p.shared_portion_min != 1.0:
+                for d in prepared.days:
+                    for meal in prepared.shared_meal_types:
+                        out[(p.name, d, meal)] = p.shared_portion_min
+            continue
+        if not hasattr(model, "share"):
             continue
         for d in prepared.days:
             for meal in prepared.shared_meal_types:

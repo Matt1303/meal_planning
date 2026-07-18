@@ -232,12 +232,29 @@ class ProfileTargets(BaseModel):
 class HouseholdSettings(BaseModel):
     profiles: list[ProfileTargets] = Field(default_factory=list)
     shared_meal_types: list[str] = Field(default_factory=list)
+    # Servings of a shared dish the household eats at one sitting. Fixing this
+    # makes the portions a redistribution rather than a reduction: whatever one
+    # person doesn't eat, the other does. With leftover_pairing (each dish eaten
+    # twice) a batch of 2 x this figure is finished exactly, none binned.
+    # None leaves each person's portion independent.
+    shared_servings_per_sitting: float | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
     def _validate_unique_names(self) -> HouseholdSettings:
         names = [p.name for p in self.profiles]
         if len(names) != len(set(names)):
             raise ValueError(f"household profile names must be unique: {names}")
+        total = self.shared_servings_per_sitting
+        if total is not None and self.profiles:
+            # The per-profile ranges have to be able to reach the total, or the
+            # model is infeasible for reasons that are hard to see in a solver log.
+            low = sum(p.shared_portion_min for p in self.profiles)
+            high = sum(p.shared_portion_max for p in self.profiles)
+            if not low <= total <= high:
+                raise ValueError(
+                    f"shared_servings_per_sitting {total} is outside the reachable "
+                    f"range [{low}, {high}] of the profiles' shared_portion bounds"
+                )
         return self
 
 

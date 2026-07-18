@@ -316,9 +316,9 @@ def _render_profile_day(
                 else ""
             )
             portion_tag = ""
-            if entry.servings < 0.995:
+            if abs(entry.servings - 1.0) >= 0.005:
                 amount = f"{entry.servings:.2f}".rstrip("0").rstrip(".")
-                portion_tag = f" <span style='color:#2a7'>({amount} serving)</span>"
+                portion_tag = f" <span style='color:#2a7'>({amount} servings)</span>"
             heading = f"**{label}**: {entry.title}{portion_tag}{leftover_tag}"
             if entry.rating is not None:
                 heading += f"  \n<span style='color:#b58900;font-size:0.85em'>{_stars(entry.rating)}</span>"

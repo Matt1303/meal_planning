@@ -67,7 +67,12 @@ def _user_servings_on_day(m: Any, p: ProfileSpec, r: int, d: int, prepared: Prep
             if prepared.allowed_meal[(r, meal)]
         )
     else:
-        shared_sum = sum(m.x_shared[r, d, meal] for meal in prepared.shared_meal_types)
+        # A fixed portion is just a coefficient on the dish binary — no variable
+        # needed, which is why pinning the split solves far faster than letting
+        # the solver choose it.
+        shared_sum = p.shared_portion_min * sum(
+            m.x_shared[r, d, meal] for meal in prepared.shared_meal_types
+        )
     user_sum = sum(m.x_user[p.name, r, d, meal] for meal in prepared.per_user_meal_types)
     return shared_sum + user_sum
 
@@ -251,6 +256,29 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
 
             model.slot_share_min = Constraint(model.FLEX_SLOTS, rule=slot_share_min)
             model.slot_share_max = Constraint(model.FLEX_SLOTS, rule=slot_share_max)
+
+            # Conserve the batch: the household eats a fixed number of servings
+            # per sitting, so a portion one person gives up the other takes.
+            # Cooked once and eaten twice, a 2 x total batch is finished exactly.
+            per_sitting = settings.household.shared_servings_per_sitting
+            if per_sitting is not None:
+                fixed_eaters = sum(
+                    p.shared_portion_min for p in prepared.profiles if not p.portion_is_flexible
+                )
+
+                def sitting_total_rule(m: Any, d: int, meal: str) -> Any:
+                    return (
+                        sum(
+                            m.share[p.name, r, d, meal]
+                            for p in flexible_profiles
+                            for r in prepared.recipes
+                            if prepared.allowed_meal[(r, meal)]
+                        )
+                        + fixed_eaters
+                        == per_sitting
+                    )
+
+                model.sitting_total = Constraint(model.D, model.SHARED_M, rule=sitting_total_rule)
 
     snack_slot_set = set(prepared.snack_meal_types)
 

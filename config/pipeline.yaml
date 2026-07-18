@@ -141,6 +141,11 @@ household:
       fiber_daily_min: 30
       fixed_meals:
         breakfast: "Matt Breakfast Smoothie"
+      # Fixed 1.25 against Ellie's 0.75 — the two add to 2 servings a sitting,
+      # so a 4-serving batch is finished across the fresh and leftover sittings.
+      # Pinned rather than solver-chosen so it can be eyeballed when serving up.
+      shared_portion_min: 1.25
+      shared_portion_max: 1.25
     - name: ellie
       display_name: Ellie
       # Calorie target 1500/day (±150 band).
@@ -150,11 +155,14 @@ household:
       fiber_daily_min: 25
       fixed_meals:
         breakfast: "Ellie Breakfast Oats"
-      # Same lunch/dinner as Matt, smaller plate: the solver picks how much of
-      # each shared dish she has, between half and a full serving. Without this
+      # 0.75 to Matt's 1.25 — a smaller plate of the same dish. Without this
       # she inherits portions sized for a 3300 kcal day.
-      shared_portion_min: 0.5
-      shared_portion_max: 1.0
+      shared_portion_min: 0.75
+      shared_portion_max: 0.75
+  # One serving each on average, redistributed 1.25 / 0.75. Each dish is cooked
+  # once and eaten twice (leftover_pairing), so a 4-serving batch is finished
+  # exactly, none binned.
+  shared_servings_per_sitting: 2
   shared_meal_types:
     - lunch
     - dinner

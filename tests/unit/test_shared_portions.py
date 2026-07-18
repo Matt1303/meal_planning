@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from meal_planner.config import ProfileTargets, Settings
+from meal_planner.config import HouseholdSettings, ProfileTargets, Settings
 from meal_planner.optimize.data import ProfileSpec
 
 
@@ -31,11 +31,27 @@ def test_shared_portion_rejects_inverted_range() -> None:
 
 
 @pytest.mark.unit
-def test_ellie_shares_a_part_portion_in_shipped_config() -> None:
+def test_shipped_config_redistributes_a_whole_batch() -> None:
     # Matt (3300 kcal) and Ellie (1500 kcal) eat the same lunch and dinner, so
-    # Ellie needs a smaller plate for both calorie bands to be satisfiable.
-    settings = Settings.load(Path("config/pipeline.yaml"))
-    ellie = next(p for p in settings.household.profiles if p.name == "ellie")
-    matt = next(p for p in settings.household.profiles if p.name == "matt")
-    assert ellie.shared_portion_min < ellie.shared_portion_max
-    assert matt.shared_portion_min == matt.shared_portion_max == 1.0
+    # the servings are split unevenly — but they still add to two per sitting,
+    # which finishes a 4-serving batch over the fresh and leftover sittings.
+    household = Settings.load(Path("config/pipeline.yaml")).household
+    matt = next(p for p in household.profiles if p.name == "matt")
+    ellie = next(p for p in household.profiles if p.name == "ellie")
+    assert household.shared_servings_per_sitting == 2
+    assert matt.shared_portion_max > 1.0 > ellie.shared_portion_min
+    assert matt.shared_portion_min + ellie.shared_portion_max == 2
+    assert matt.shared_portion_max + ellie.shared_portion_min == 2
+
+
+@pytest.mark.unit
+def test_rejects_total_the_profiles_cannot_reach() -> None:
+    with pytest.raises(ValueError, match="outside the reachable range"):
+        HouseholdSettings(
+            profiles=[
+                ProfileTargets(name="a", shared_portion_min=0.5, shared_portion_max=0.8),
+                ProfileTargets(name="b", shared_portion_min=0.5, shared_portion_max=0.8),
+            ],
+            shared_meal_types=["dinner"],
+            shared_servings_per_sitting=2,
+        )

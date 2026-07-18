@@ -37,8 +37,9 @@ class MealEntry:
     detail: str | None = None
     # A repeat of a shared dish already cooked earlier in the week (leftovers).
     is_leftover: bool = False
-    # Servings of the dish this person eats — below 1.0 when a shared dish is
-    # portioned smaller for someone on a lower calorie target.
+    # Servings of the dish this person eats. A shared dish is split between the
+    # household, so this runs above 1.0 for the bigger eater and below for the
+    # smaller one.
     servings: float = 1.0
 
 
