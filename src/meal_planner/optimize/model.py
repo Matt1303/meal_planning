@@ -613,9 +613,14 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
         recency_term = sum(
             recency[r] * _meal_appearances(m, r, d, prepared) for r in m.R for d in m.D
         )
-        slack = sum(m.slack_group[p, d, g] for p in m.P for d in m.D for g in m.G) + sum(
+        # Daily Dozen shortfall is penalised separately from the nutrition
+        # shortfalls below. Sharing one weight meant leaning on variety also
+        # tightened the calorie and protein bands by the same factor, so the two
+        # could never be traded against each other.
+        group_slack = sum(m.slack_group[p, d, g] for p in m.P for d in m.D for g in m.G) + sum(
             m.slack_weekly_group[p, g] for p in m.P for g in m.G
         )
+        slack: Any = 0
         per_profile_per_day_slacks = (
             "slack_cal_min",
             "slack_cal_max",
@@ -653,6 +658,7 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
             + opt.rating_weight * rating_term
             - opt.recency_weight * recency_term
             - opt.slack_weight * slack
+            - opt.group_slack_weight * group_slack
             - opt.spacing_weight * spacing_term
             - settings.topup.whey_solver_penalty * whey_term
         )

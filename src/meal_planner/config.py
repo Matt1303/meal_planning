@@ -100,7 +100,12 @@ class OptimizerSettings(BaseModel):
     rating_weight: float = 1.0
     diversity_weight: float = 1.0
     recency_weight: float = 0.8
+    # Penalty on missing a nutrition target (calories, protein, fibre, snacks).
     slack_weight: float = 5.0
+    # Penalty on missing a Daily Dozen group target. Separate from slack_weight
+    # so variety and the nutrition bands can be traded against each other;
+    # defaults to the same value, which is how they behaved when shared.
+    group_slack_weight: float = 5.0
     spacing_weight: float = 2.0
     recency_half_life_days: int = Field(default=30, gt=0)
     calories_daily_min: int | None = 1800

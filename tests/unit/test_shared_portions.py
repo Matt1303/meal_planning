@@ -55,3 +55,16 @@ def test_rejects_total_the_profiles_cannot_reach() -> None:
             shared_meal_types=["dinner"],
             shared_servings_per_sitting=2,
         )
+
+
+@pytest.mark.unit
+def test_group_and_nutrition_slack_weights_are_independent() -> None:
+    # They were one weight, so pushing harder on the Daily Dozen also tightened
+    # the calorie and protein bands by the same factor. Defaulting them equal
+    # keeps the previous behaviour until one is deliberately changed.
+    optimizer = Settings.load(Path("config/pipeline.yaml")).optimizer
+    assert optimizer.slack_weight == optimizer.group_slack_weight
+
+    tuned = optimizer.model_copy(update={"group_slack_weight": 12.0})
+    assert tuned.slack_weight == optimizer.slack_weight
+    assert tuned.group_slack_weight == 12.0
