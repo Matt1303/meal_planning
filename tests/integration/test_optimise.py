@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from itertools import pairwise
 from pathlib import Path
@@ -17,7 +17,12 @@ from meal_planner.db.recipes_repo import (
 )
 from meal_planner.ingest import ingest_local_html
 from meal_planner.optimize import optimize_plan, write_plan
+from meal_planner.optimize.confirm import confirm_plan
 from meal_planner.parse import parse_ingredients
+
+# Four days: an even number, so leftover pairing tiles, and small enough for the
+# fixture's two shared-capable recipes to fill every slot.
+FIXTURE_DAYS = 4
 
 
 @pytest.fixture
@@ -40,8 +45,19 @@ def settings_with_fixtures() -> Settings:
                     "calories_weekly_min": None,
                     "calories_weekly_max": None,
                     "fiber_weekly_min": None,
-                    "max_recipe_repeats": 7,
+                    # The fixture has a single breakfast recipe and the repeat
+                    # cap counts appearances across every profile, so a two-person
+                    # household eats it FIXTURE_DAYS x 2 times. The cap has to
+                    # clear that or the model is infeasible before any assertion.
+                    "max_recipe_repeats": FIXTURE_DAYS * 2 + 2,
                     "min_rating": 0,
+                    # The fixture has two plant recipes that can take a lunch or
+                    # dinner slot. Leftover pairing uses each dish exactly twice,
+                    # so those two can fill four slots — inheriting the
+                    # production 8-day horizon made the model infeasible before
+                    # any assertion ran. Pin the horizon here rather than
+                    # tracking whatever the shipped config happens to say.
+                    "planning_horizon_days": FIXTURE_DAYS,
                 }
             ),
         }
@@ -119,24 +135,53 @@ def test_no_recipes_raises(clean_db: Engine, settings_with_fixtures: Settings) -
 
 
 @pytest.mark.integration
-def test_meal_history_recorded(clean_db: Engine, settings_with_fixtures: Settings) -> None:
+def test_meal_history_recorded_only_once_confirmed(
+    clean_db: Engine, settings_with_fixtures: Settings
+) -> None:
     ingest_local_html(settings_with_fixtures, engine=clean_db)
     parse_ingredients(settings_with_fixtures, engine=clean_db)
     _seed_recipe_nutrition(clean_db)
     result = optimize_plan(settings_with_fixtures, engine=clean_db)
-    write_plan(settings_with_fixtures, result, engine=clean_db)
+    plan_run_id = write_plan(settings_with_fixtures, result, engine=clean_db)
+
+    # Generating a plan leaves a draft — running the optimiser a few times to
+    # compare options must not pollute the history the recency term reads.
+    with clean_db.connect() as conn:
+        assert (
+            conn.execute(text("SELECT count(*) FROM meal_planning.meal_history")).scalar_one() == 0
+        )
+
+    confirm_plan(plan_run_id, date(2026, 1, 5), settings_with_fixtures, engine=clean_db)
     with clean_db.connect() as conn:
         n = conn.execute(text("SELECT count(*) FROM meal_planning.meal_history")).scalar_one()
     assert n > 0
 
 
 def _flatten_picks(plan: dict[int, dict[str, dict[str, int | None]]]) -> dict[int, list[int]]:
+    """Every recipe picked on a day, across all slots and eaters."""
     out: dict[int, list[int]] = {}
     for day, slot_to_cell in plan.items():
         for cell in slot_to_cell.values():
             for recipe_id in cell.values():
                 if recipe_id is not None:
                     out.setdefault(day, []).append(recipe_id)
+    return out
+
+
+def _picks_per_eater(
+    plan: dict[int, dict[str, dict[str, int | None]]],
+) -> dict[tuple[int, str], list[int]]:
+    """Recipes each person eats on each day.
+
+    The no-repeat rule is per person: a household sharing one breakfast recipe
+    means the same id legitimately appears once for each of them on a day.
+    """
+    out: dict[tuple[int, str], list[int]] = {}
+    for day, slot_to_cell in plan.items():
+        for cell in slot_to_cell.values():
+            for owner, recipe_id in cell.items():
+                if recipe_id is not None:
+                    out.setdefault((day, owner), []).append(recipe_id)
     return out
 
 
@@ -148,11 +193,10 @@ def test_no_recipe_appears_twice_on_same_day(
     parse_ingredients(settings_with_fixtures, engine=clean_db)
     _seed_recipe_nutrition(clean_db)
     result = optimize_plan(settings_with_fixtures, engine=clean_db)
-    by_day = _flatten_picks(result.plan)
-    for day, picked in by_day.items():
+    for (day, owner), picked in _picks_per_eater(result.plan).items():
         assert len(picked) == len(
             set(picked)
-        ), f"day {day}: recipe appears in more than one slot: {picked}"
+        ), f"day {day}, {owner}: recipe appears in more than one slot: {picked}"
 
 
 def _count_consecutive_repeats(plan: dict[int, dict[str, dict[str, int | None]]]) -> int:
@@ -324,7 +368,7 @@ def test_household_per_profile_day_totals_recorded(
             ),
             {"pr": plan_run_id},
         ).fetchall()
-    assert len(rows) == 7 * 2
+    assert len(rows) == FIXTURE_DAYS * 2
     for _, _, kcal in rows:
         assert kcal is not None and float(kcal) > 0
 
