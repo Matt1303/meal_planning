@@ -109,7 +109,6 @@ Cabbage
 Cauliflower
 Chinese cabbage
 Collard greens
-Kale
 Kohlrabi
 Mustard greens
 Napa cabbage
@@ -130,6 +129,7 @@ Escarole
 Frisee
 Green leaf lettuce
 Iceberg lettuce
+Kale
 Lettuce (various types)
 Radicchio
 Red leaf lettuce

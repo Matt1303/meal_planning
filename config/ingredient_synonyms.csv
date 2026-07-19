@@ -8,11 +8,11 @@ cilantro,coriander
 spring onion,green onions
 scallion,scallions
 sweet potato,sweet potatoes
-flax seeds,flaxseed
-linseed,flaxseed
-linseeds,flaxseed
-ground flax,flaxseed
-ground flaxseed,flaxseed
+flax seeds,flax seeds
+linseed,flax seeds
+linseeds,flax seeds
+ground flax,flax seeds
+ground flaxseed,flax seeds
 chickpeas,chick peas
 unsweetened almond milk,almond milk
 sweetened almond milk,almond milk
@@ -67,3 +67,8 @@ red wine vinegar,red wine vinegar
 white wine vinegar,white wine vinegar
 apple cider vinegar,apple cider vinegar
 balsamic vinegar,balsamic vinegar
+flaxseed,flax seeds
+flaxseeds,flax seeds
+ground flaxseeds,flax seeds
+milled flaxseed,flax seeds
+milled linseed,flax seeds
