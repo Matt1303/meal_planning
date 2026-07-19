@@ -97,10 +97,51 @@ def ingest(config: Path = typer.Option(Path("config/pipeline.yaml"), "--config")
 @app.command("parse")
 def parse_cmd(config: Path = typer.Option(Path("config/pipeline.yaml"), "--config")) -> None:
     from meal_planner.parse import parse_ingredients
+    from meal_planner.review import unreviewed_recipes
 
     settings = Settings.load(config)
     total = parse_ingredients(settings)
     typer.echo(f"parsed={total}")
+
+    # A recipe added or edited since the last heading review has lines nothing
+    # can classify — "Polenta" reads as an ingredient and gets a default
+    # portion. Say so rather than let it quietly inflate a plan.
+    pending = [
+        r
+        for r in unreviewed_recipes(get_engine(), settings.parse.review_state_path)
+        if r.needs_attention
+    ]
+    if pending:
+        typer.echo(
+            f"\n{len(pending)} recipe(s) have quantity-less lines not yet reviewed for "
+            f"section headings — run 'meal-planner review headings' to list them."
+        )
+
+
+@app.command("review")
+def review_cmd(
+    config: Path = typer.Option(Path("config/pipeline.yaml"), "--config"),
+    accept: bool = typer.Option(False, "--accept", help="Record the current lines as reviewed"),
+) -> None:
+    """List recipes whose quantity-less lines have not been reviewed for headings."""
+    from meal_planner.review import save_review_state, unreviewed_recipes
+
+    settings = Settings.load(config)
+    pending = unreviewed_recipes(get_engine(), settings.parse.review_state_path)
+    flagged = [r for r in pending if r.needs_attention]
+    for recipe in flagged:
+        typer.echo(f"\n{recipe.title}")
+        for line in recipe.quantityless_lines:
+            typer.echo(f"    {line}")
+    typer.echo(f"\n{len(flagged)} recipe(s) to review, {len(pending)} changed in total.")
+    if accept:
+        state = {r.title: r.lines_hash for r in pending}
+        existing = settings.parse.review_state_path
+        from meal_planner.review import load_review_state
+
+        merged = {**load_review_state(existing), **state}
+        save_review_state(existing, merged)
+        typer.echo(f"recorded {len(state)} recipe(s) as reviewed")
 
 
 @app.command("optimise")

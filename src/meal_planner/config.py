@@ -53,6 +53,9 @@ class ParseSettings(BaseModel):
     # Reviewed (recipe, line) pairs that are section headings or continuation
     # fragments rather than ingredients — see load_declared_headers.
     section_headers_path: Path = Path("config/section_headers.csv")
+    # recipe_title -> digest of the ingredient block last reviewed for headings.
+    # A recipe missing or differing from this has unreviewed lines.
+    review_state_path: Path = Path("config/section_header_review.csv")
 
 
 class NutritionSettings(BaseModel):
