@@ -86,7 +86,10 @@ llm:
 optimizer:
   min_rating: 3
   rating_weight: 1.0
-  diversity_weight: 1.0
+  # Scaled down from 1.0 when the Daily Dozen index grew from 45 foods to 112:
+  # the diversity term sums one binary per food, so a bigger index inflated it
+  # and it started outbidding the protein slack penalty (Ellie fell to 53 g).
+  diversity_weight: 0.4
   recency_weight: 0.8
   slack_weight: 5.0
   recency_half_life_days: 30
