@@ -13,7 +13,10 @@ def test_parse_canonical_food_list() -> None:
     parsed = parse_food_list(path)
     items = {item.lower(): group for item, group in parsed}
     assert items.get("chickpeas") == "Beans"
-    assert items.get("kale") == "Cruciferous Vegetables"
+    # Kale is deliberately a green rather than a brassica here: Greens was the
+    # one Daily Dozen group nothing could reach, and kale is the commonest leaf.
+    assert items.get("kale") == "Greens"
+    assert items.get("broccoli") == "Cruciferous Vegetables"
     assert items.get("oats") == "Whole Grains"
 
 
@@ -21,7 +24,11 @@ def test_parse_canonical_food_list() -> None:
 def test_load_food_groups_paths() -> None:
     groups = load_food_groups([Path("config/food_list_canonical.txt")])
     assert "kale" in groups
-    assert groups["kale"] == "Cruciferous Vegetables"
+    assert groups["kale"] == "Greens"
+    # A header is a line blank on both sides, so an item placed directly under
+    # one silently demotes it and reclassifies the whole section.
+    assert groups["spinach"] == "Greens"
+    assert groups["broccoli"] == "Cruciferous Vegetables"
 
 
 @pytest.mark.unit

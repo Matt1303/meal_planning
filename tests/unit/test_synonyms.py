@@ -42,4 +42,4 @@ def test_fuzzy_below_threshold_returns_none(context: ParseContext) -> None:
 def test_resolve_known_canonical(context: ParseContext) -> None:
     canonical, group = _resolve_canonical("kale", "kale", context)
     assert canonical == "kale"
-    assert group == "Cruciferous Vegetables"
+    assert group == "Greens"
