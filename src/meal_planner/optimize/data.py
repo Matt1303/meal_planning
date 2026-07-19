@@ -376,9 +376,13 @@ def prepare(
                 allowed_meal[(r, m)] = 1 if m in allowed else 0
 
     ing_df = inputs.ingredients[inputs.ingredients["recipe_id"].isin(recipes_list)].copy()
-    daily_df = ing_df[ing_df["portion_met"].astype(bool)]
-    ingredients_canonical = sorted(daily_df["ingredient_canonical"].dropna().unique().tolist())
     food_groups = list(targets.keys())
+    # Daily Dozen counts each distinct food as its fraction of a portion, capped
+    # at one. A food that never reaches a full portion still counts for what it
+    # is, so the index set is every Daily Dozen food rather than only those
+    # clearing the bar — greens and flaxseed never clear it and were invisible.
+    daily_df = ing_df[ing_df["food_group"].isin(food_groups)]
+    ingredients_canonical = sorted(daily_df["ingredient_canonical"].dropna().unique().tolist())
 
     portion_met = {(r, i): 0 for r in recipes_list for i in ingredients_canonical}
     portions = {(r, i): 0.0 for r in recipes_list for i in ingredients_canonical}
@@ -387,14 +391,16 @@ def prepare(
     for _, row in daily_df.iterrows():
         r = int(cast(int, row["recipe_id"]))
         i = str(row["ingredient_canonical"])
-        portion_met[(r, i)] = 1
+        portion_met[(r, i)] = 1 if bool(row["portion_met"]) else 0
         food_group_of[i] = str(row["food_group"])
         portion_value = row["portions"]
-        portions[(r, i)] = (
+        fraction = (
             float(portion_value)
             if portion_value is not None and not pd.isna(portion_value)
             else 0.0
         )
+        # Capped so 240 g of one wholegrain is one grain, not three.
+        portions[(r, i)] = min(fraction, 1.0)
 
     group_portions = {(r, g): 0.0 for r in recipes_list for g in food_groups}
     for _, row in ing_df.iterrows():

@@ -215,7 +215,7 @@ def insert_plan_day_group(
     plan_run_id: int,
     day: int,
     food_group: str,
-    daily_count: int,
+    daily_count: Decimal | float,
     daily_portions: Decimal | float,
 ) -> None:
     conn.execute(
@@ -230,7 +230,7 @@ def insert_plan_day_group(
             "pr": plan_run_id,
             "d": day,
             "fg": food_group,
-            "c": daily_count,
+            "c": Decimal(str(daily_count)),
             "p": Decimal(str(daily_portions)),
         },
     )

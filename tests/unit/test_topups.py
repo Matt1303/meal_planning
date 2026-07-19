@@ -20,7 +20,9 @@ def _topup() -> TopUpSettings:
     )
 
 
-def _line(canonical: str, group: str | None, qualifies: bool) -> IngredientLine:
+def _line(
+    canonical: str, group: str | None, qualifies: bool, fraction: float | None = None
+) -> IngredientLine:
     return IngredientLine(
         raw_text=canonical,
         ingredient_canonical=canonical,
@@ -35,21 +37,34 @@ def _line(canonical: str, group: str | None, qualifies: bool) -> IngredientLine:
         source=None,
         food_group=group,
         dozen_qualifies=qualifies,
+        dozen_fraction=(1.0 if qualifies else 0.0) if fraction is None else fraction,
     )
 
 
 @pytest.mark.unit
-def test_meal_dozen_counts_distinct_qualifying_foods() -> None:
+def test_meal_dozen_counts_each_food_capped_at_one_portion() -> None:
     lines = [
         _line("rice", "Whole Grains", True),
         _line("oats", "Whole Grains", True),
-        _line("rice", "Whole Grains", True),  # duplicate food — counted once
-        _line("kale", "Greens", False),  # below min portion — does not count
+        # Same food twice: the two halves add up, but never past one portion.
+        _line("rice", "Whole Grains", True),
+        # Below a full portion, so it counts for its fraction rather than zero.
+        _line("kale", "Greens", False, fraction=0.625),
         _line("salt", None, False),
     ]
     dz = _meal_dozen(lines, {"Whole Grains", "Greens", "Berries"})
     assert sorted(dz["Whole Grains"]) == ["oats", "rice"]
-    assert "Greens" not in dz  # kale did not meet its min portion
+    assert dz["Whole Grains"]["rice"] == pytest.approx(1.0)
+    assert dz["Greens"]["kale"] == pytest.approx(0.625)
+    assert "Berries" not in dz
+
+
+@pytest.mark.unit
+def test_meal_dozen_caps_a_generous_single_food_at_one() -> None:
+    # 400 g of rice is one whole grain, not five — the rule that made counting
+    # distinct foods necessary in the first place.
+    dz = _meal_dozen([_line("rice", "Whole Grains", True, fraction=1.0)], {"Whole Grains"})
+    assert sum(dz["Whole Grains"].values()) == pytest.approx(1.0)
 
 
 @pytest.mark.unit

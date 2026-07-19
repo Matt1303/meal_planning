@@ -398,7 +398,7 @@ def daily_dozen_heatmap(view: PlanView) -> go.Figure:
         row: list[float] = []
         info: list[str] = []
         for day in view.days:
-            count = 0
+            count = 0.0
             target = 0
             portions = 0.0
             for entry in day.per_profile:
@@ -409,7 +409,7 @@ def daily_dozen_heatmap(view: PlanView) -> go.Figure:
                 break
             ratio = (count / target) if target > 0 else 0.0
             row.append(ratio)
-            info.append(f"{count} / {target} · {portions:.1f} portions")
+            info.append(f"{count:.1f} / {target} · {portions:.1f} portions")
         z.append(row)
         custom.append(info)
 

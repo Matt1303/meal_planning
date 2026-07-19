@@ -226,20 +226,23 @@ def write_plan(settings: Settings, result: OptimizeResult, *, engine: Engine | N
                 }
             )
             day_ingredients = ingredients[ingredients["recipe_id"].isin(day_recipe_ids)]
-            day_ingredients = day_ingredients[day_ingredients["portion_met"].astype(bool)]
+            # Daily Dozen credit is each distinct food's fraction of a portion,
+            # capped at one — matching the solver, which counts the same way.
+            day_ingredients = day_ingredients[day_ingredients["portions"].notna()]
             grouped = day_ingredients.groupby("food_group") if not day_ingredients.empty else None
 
             for group in targets:
                 if grouped is not None and group in grouped.groups:
                     subset = grouped.get_group(group)
-                    daily_count = int(subset["ingredient_canonical"].nunique())
+                    per_food = subset.groupby("ingredient_canonical")["portions"].sum()
+                    daily_count = float(per_food.clip(upper=1.0).sum())
                     portions_total = subset["portions"].fillna(0).sum()
                     daily_portions = Decimal(str(float(portions_total)))
                 else:
-                    daily_count = 0
+                    daily_count = 0.0
                     daily_portions = Decimal(0)
-                if daily_count < int(targets[group]):
-                    daily_violations += int(targets[group]) - daily_count
+                if daily_count < float(targets[group]):
+                    daily_violations += int(round(float(targets[group]) - daily_count))
                 insert_plan_day_group(
                     conn,
                     plan_run_id=plan_run_id,

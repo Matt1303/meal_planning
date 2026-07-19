@@ -56,9 +56,8 @@ def _user_servings_on_day(m: Any, p: ProfileSpec, r: int, d: int, prepared: Prep
 
     Same as _user_recipes_on_day except a shared dish can be a fraction of a
     serving when the profile's shared_portion range allows it, so one dish can
-    feed people on very different calorie targets. Used for nutrition only:
-    Daily Dozen and ingredient variety stay dish-based, since a smaller plate
-    of a curry still delivers the same distinct foods.
+    feed people on very different calorie targets. Drives nutrition and Daily
+    Dozen credit alike: a smaller plate delivers proportionally less of both.
     """
     if p.portion_is_flexible and prepared.shared_meal_types:
         shared_sum = sum(
@@ -123,7 +122,10 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
             bounds=(0, max(p.shared_portion_max for p in flexible_profiles)),
         )
 
-    model.z = Var(model.P, model.D, model.I, domain=Binary)
+    # How much of a Daily Dozen portion of food i profile p gets on day d, capped
+    # at one. Continuous rather than binary: a capped fraction needs no
+    # integrality, and dropping these binaries makes the search markedly cheaper.
+    model.z = Var(model.P, model.D, model.I, domain=NonNegativeReals, bounds=(0, 1))
     model.y = Var(model.P, model.I, domain=Binary)
 
     # Per-person whey scoops the solver may allocate to hit the protein floor
@@ -378,12 +380,14 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
 
     model.one_recipe_per_day = Constraint(model.P, model.R, model.D, rule=one_per_day_rule)
 
-    portion_met = prepared.portion_met
+    capped_portions = prepared.portions
 
     def ingredient_use_rule(m: Any, p: str, d: int, i: str) -> Any:
+        """Credit for food i is what the day's meals actually deliver, capped at
+        one portion by the variable's own upper bound."""
         profile = profiles_by_name[p]
         return m.z[p, d, i] <= sum(
-            portion_met[(r, i)] * _user_recipes_on_day(m, profile, r, d, prepared) for r in m.R
+            capped_portions[(r, i)] * _user_servings_on_day(m, profile, r, d, prepared) for r in m.R
         )
 
     model.ingredient_use = Constraint(model.P, model.D, model.I, rule=ingredient_use_rule)

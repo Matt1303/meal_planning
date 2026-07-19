@@ -104,17 +104,17 @@ def _fmt_servings(value: float) -> str:
     return f"{value:.0f}" if abs(value - round(value)) < 0.05 else f"{value:.1f}"
 
 
-def _render_dozen_strip(daily_dozen: dict[str, tuple[int, int, float]]) -> None:
+def _render_dozen_strip(daily_dozen: dict[str, tuple[float, int, float]]) -> None:
     if not daily_dozen:
         return
     # Total servings achieved vs target, each category capped at its target so an
     # over-target category can't compensate for a missed one.
     total_target = sum(t for _, t, _ in daily_dozen.values())
-    total_done = sum(min(int(p), t) for _, t, p in daily_dozen.values())
+    total_done = sum(min(p, float(t)) for _, t, p in daily_dozen.values())
     color = "#1a7f37" if total_done >= total_target else "#bf8700"
     st.markdown(
         f"<span style='font-size:0.9em;color:{color}'><b>Daily Dozen "
-        f"{total_done}/{total_target}</b></span>",
+        f"{_fmt_servings(total_done)}/{total_target}</b></span>",
         unsafe_allow_html=True,
     )
     chips: list[str] = []
@@ -142,16 +142,21 @@ def _render_dozen_strip(daily_dozen: dict[str, tuple[int, int, float]]) -> None:
     )
 
 
-def _meal_dozen_line(dozen: dict[str, list[str]]) -> str:
+def _fmt_portion(value: float) -> str:
+    return f"{value:.0f}" if abs(value - round(value)) < 0.05 else f"{value:.1f}"
+
+
+def _meal_dozen_line(dozen: dict[str, dict[str, float]]) -> str:
     parts: list[str] = []
     for group in _DOZEN_ORDER:
         foods = dozen.get(group)
         if not foods:
             continue
         icon = DOZEN_ICONS.get(group, "•")
-        label = f"{icon} {len(foods)}" if len(foods) > 1 else icon
-        tooltip = f"{group}: {', '.join(foods)}"
-        parts.append(f"<span title='{tooltip}'>{label}</span>")
+        total = sum(foods.values())
+        label = icon if abs(total - 1.0) < 0.05 else f"{icon} {_fmt_portion(total)}"
+        detail = ", ".join(f"{f} {_fmt_portion(v)}" for f, v in sorted(foods.items()))
+        parts.append(f"<span title='{group}: {detail}'>{label}</span>")
     return " · ".join(parts)
 
 
