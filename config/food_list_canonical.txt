@@ -351,6 +351,7 @@ Rice noodles
 Egg noodles
 Sourdough bread
 Bread
+Cooked pasta
 Cooked rice
 Couscous
 Bulgur wheat

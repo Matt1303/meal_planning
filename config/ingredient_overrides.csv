@@ -26,3 +26,5 @@ Wholegrain rice,cooked rice,Whole Grains,Served portion — 250 g default is a c
 Jasmine rice,cooked rice,Whole Grains,Served portion — 250 g default is a cooked weight
 "Two 400 gram cans brown lentils, drained and rinsed","lentils: brown, green, red",Beans,"Fuzzy-matched 'brown rice' on the word brown — 362 vs 116 kcal/100g, and Grains not Beans"
 8 ounces/225g whole-grain or bean,linguine,Whole Grains,Exporter split 'whole-grain or bean-based linguine' across two lines; this half carries the 225 g
+Pasta of choice,cooked pasta,,"Serving suggestion — 200 g default is a cooked weight, not dry"
+225 g uncooked pasta of choice (gluten-free or quinoa farfalle (butterfly)),pasta,,Explicitly uncooked — the cooked pasta canonical is a fuzzy attractor for this
