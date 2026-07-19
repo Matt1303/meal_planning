@@ -157,7 +157,7 @@ household:
       protein_daily_min: 75
       fiber_daily_min: 25
       fixed_meals:
-        breakfast: "Ellie Breakfast Oats"
+        breakfast: "Simple Overnight Oats"
       # 0.75 to Matt's 1.25 — a smaller plate of the same dish. Without this
       # she inherits portions sized for a 3300 kcal day.
       shared_portion_min: 0.75

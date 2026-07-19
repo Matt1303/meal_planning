@@ -9,6 +9,11 @@ terms:
   - ham
   - prosciutto
   - chorizo
+  - pancetta
+  - guanciale
+  - salami
+  - pepperoni
+  - mortadella
   - turkey
   - duck
   - goose
@@ -41,6 +46,11 @@ terms:
   - mascarpone
   - cream cheese
   - gruyere
+  - pecorino
+  - manchego
+  - paneer
+  - gorgonzola
+  - stilton
   - cheese
   - butter
   - ghee
@@ -55,6 +65,37 @@ terms:
   - gelatine
   - lard
   - tallow
+# Plant foods whose names contain a dairy word. Exempted before the terms above
+# are checked, exactly as qualified_milks are — "peanut butter" is not butter.
+# Deliberately excludes egg noodles, which really do contain egg.
+qualified_plant_terms:
+  - almond butter
+  - peanut butter
+  - cashew butter
+  - nut butter
+  - seed butter
+  - sunflower seed butter
+  - butter bean
+  - butter beans
+  - cocoa butter
+  - coconut butter
+  - vegan butter
+  - plant butter
+  - dairy-free butter
+  - coconut cream
+  - cashew cream
+  - oat cream
+  - soy cream
+  - coconut yogurt
+  - coconut yoghurt
+  - soy yogurt
+  - soya yoghurt
+  - vegan yoghurt
+  - vegan yogurt
+  - vegan cheese
+  - vegan parmesan
+  - nutritional yeast
+
 qualified_milks:
   - almond milk
   - soy milk
