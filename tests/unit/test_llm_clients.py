@@ -69,13 +69,33 @@ def test_anthropic_parse_array_invalid_json() -> None:
 
 
 @pytest.mark.unit
-def test_factory_returns_null_when_no_key() -> None:
+def test_factory_returns_null_when_no_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    # An empty settings key is not on its own "no key" — the factory falls back
+    # to the environment, so a real key in the developer's .env satisfied this
+    # and the test only passed on machines that had none.
+    for var in ("LLM_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+
     from meal_planner.config import LLMSettings
     from meal_planner.llm.factory import get_llm_client
 
     settings = LLMSettings(api_key="")
     client = get_llm_client(settings)
     assert isinstance(client, NullLLM)
+
+
+@pytest.mark.unit
+def test_factory_falls_back_to_environment_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The fallback the test above has to defeat: this is how the pipeline picks
+    # the key up from .env rather than the config file.
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+
+    from meal_planner.config import LLMSettings
+    from meal_planner.llm.factory import get_llm_client
+
+    client = get_llm_client(LLMSettings(provider="anthropic", api_key=""))
+    assert not isinstance(client, NullLLM)
 
 
 @pytest.mark.unit
