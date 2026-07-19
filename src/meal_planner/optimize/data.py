@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from math import exp
 from typing import cast
 
 import pandas as pd
-from sqlalchemy import Connection, Engine, text
+from sqlalchemy import Engine
 
 from meal_planner.config import ProfileTargets, Settings
 from meal_planner.logging import get_logger
@@ -131,119 +130,6 @@ def load_inputs(engine: Engine, *, include_non_plant: bool) -> ModelInputs:
 
 
 # (recipe_id, profile_name) -> (kcal, fiber_g, protein_g, fat_g, carbs_g) adjustment.
-NutritionDelta = dict[tuple[int, str], tuple[float, float, float, float, float]]
-_MACRO_COLS = (
-    "kcal_per_100g",
-    "fiber_g_per_100g",
-    "protein_g_per_100g",
-    "fat_g_per_100g",
-    "carbs_g_per_100g",
-)
-
-
-def _density_map(conn: Engine | Connection, canonicals: set[str]) -> dict[str, list[float]]:
-    if not canonicals:
-        return {}
-    rows = pd.read_sql(
-        text(
-            f"""
-            SELECT lower(ingredient_canonical) AS canon, {", ".join(_MACRO_COLS)}
-            FROM meal_planning.ingredient_nutrition_cache
-            WHERE lower(ingredient_canonical) = ANY(:cans)
-            """
-        ),
-        conn,
-        params={"cans": list(canonicals)},
-    )
-    return {
-        row.canon: [float(getattr(row, col) or 0.0) for col in _MACRO_COLS]
-        for row in rows.itertuples()
-    }
-
-
-def _portion_delta(
-    base_grams: float,
-    person_grams: float,
-    person_density: list[float],
-    base_density: list[float],
-) -> tuple[float, float, float, float, float]:
-    """Macro change from swapping base_grams (valued at base_density) for
-    person_grams (valued at person_density), both per 100 g."""
-    return cast(
-        tuple[float, float, float, float, float],
-        tuple(
-            (person_grams * person_density[i] - base_grams * base_density[i]) / 100.0
-            for i in range(5)
-        ),
-    )
-
-
-def per_person_nutrition_deltas(conn: Engine | Connection, settings: Settings) -> NutritionDelta:
-    """Per-recipe, per-person macro adjustments from per_person_portions.
-
-    For each override line, replace the shared per-serving grams (and, when
-    value_as is set, the dry-vs-cooked valuation that built the recipe nutrition)
-    with the profile's serving — returning the delta to add to per-person totals.
-    The baseline term mirrors nutrition aggregation exactly (grams/100 * density),
-    so swapping it is loss-less.
-    """
-    specs = settings.optimizer.per_person_portions
-    if not specs:
-        return {}
-    needed = {c.strip().lower() for s in specs for c in s.canonicals}
-    needed |= {s.value_as.strip().lower() for s in specs if s.value_as}
-    density = _density_map(conn, needed)
-    declared_ids = {
-        int(r)
-        for (r,) in pd.read_sql(
-            text("SELECT recipe_id FROM meal_planning.recipe WHERE declared_kcal IS NOT NULL"),
-            conn,
-        ).itertuples(index=False)
-    }
-
-    acc: dict[tuple[int, str], list[float]] = defaultdict(lambda: [0.0] * 5)
-    for spec in specs:
-        cans = [c.strip().lower() for c in spec.canonicals]
-        value_density = density.get(spec.value_as.strip().lower()) if spec.value_as else None
-        estimated_clause = " AND ri.portion_estimated" if spec.estimated_only else ""
-        rows = pd.read_sql(
-            text(
-                f"""
-                SELECT ri.recipe_id, lower(ri.ingredient_canonical) AS canon,
-                       ri.per_serving_grams
-                FROM meal_planning.recipe_ingredient ri
-                WHERE lower(ri.ingredient_canonical) = ANY(:cans)
-                  AND ri.per_serving_grams IS NOT NULL
-                  AND ri.sub_recipe_id IS NULL{estimated_clause}
-                """
-            ),
-            conn,
-            params={"cans": cans},
-        )
-        for row in rows.itertuples():
-            canonical_density = density.get(row.canon)
-            if canonical_density is None or pd.isna(row.per_serving_grams):
-                continue
-            base_grams = float(row.per_serving_grams)
-            person_density = value_density or canonical_density
-            # Computed recipes: the dry-rice term (base_grams * canonical_density)
-            # is provably part of per_serving_kcal, so swap it for the cooked
-            # per-person amount. Declared recipes carry an external total we can't
-            # decompose, so only apply the marginal change at the cooked density.
-            recipe_id = int(row.recipe_id)
-            base_density = (
-                person_density
-                if (recipe_id in declared_ids and value_density)
-                else canonical_density
-            )
-            for profile_name, grams in spec.grams.items():
-                target = acc[(recipe_id, profile_name)]
-                delta = _portion_delta(base_grams, grams, person_density, base_density)
-                for i in range(5):
-                    target[i] += delta[i]
-    return {key: cast(tuple[float, float, float, float, float], tuple(v)) for key, v in acc.items()}
-
-
 def filter_recipes(inputs: ModelInputs, *, min_rating: float, settings: Settings) -> ModelInputs:
     recipes = inputs.recipes.copy()
     must = set(settings.optimizer.must_include_recipe_ids)
@@ -290,10 +176,6 @@ class PreparedData:
     kcal: dict[int, float]
     fiber: dict[int, float]
     protein: dict[int, float]
-    # (recipe_id, profile_name) -> per-person macro adjustment (default 0).
-    kcal_delta: dict[tuple[int, str], float]
-    fiber_delta: dict[tuple[int, str], float]
-    protein_delta: dict[tuple[int, str], float]
     recency: dict[int, float]
     allowed_meal: dict[tuple[int, str], int]
     portion_met: dict[tuple[int, str], int]
@@ -311,11 +193,7 @@ class PreparedData:
     snack_category_limits: dict[str, int] = field(default_factory=dict)
 
 
-def prepare(
-    inputs: ModelInputs,
-    settings: Settings,
-    nutrition_deltas: NutritionDelta | None = None,
-) -> PreparedData:
+def prepare(inputs: ModelInputs, settings: Settings) -> PreparedData:
     targets = settings.daily_dozen_targets
     recipes_list = [int(r) for r in inputs.recipes["recipe_id"].tolist()]
     days = list(range(1, settings.optimizer.planning_horizon_days + 1))
@@ -482,18 +360,6 @@ def prepare(
             fixed_recipe_ids.add(fixed_rid)
             allowed_meal[(fixed_rid, meal_type)] = 1
 
-    deltas = nutrition_deltas or {}
-    recipes_set = set(recipes_list)
-    profile_names_set = {p.name for p in profiles}
-    in_scope = [
-        (key, v)
-        for key, v in deltas.items()
-        if key[0] in recipes_set and key[1] in profile_names_set
-    ]
-    kcal_delta = {key: v[0] for key, v in in_scope}
-    fiber_delta = {key: v[1] for key, v in in_scope}
-    protein_delta = {key: v[2] for key, v in in_scope}
-
     return PreparedData(
         recipes=recipes_list,
         days=days,
@@ -507,9 +373,6 @@ def prepare(
         kcal=kcal,
         fiber=fiber,
         protein=protein,
-        kcal_delta=kcal_delta,
-        fiber_delta=fiber_delta,
-        protein_delta=protein_delta,
         recency=recency,
         allowed_meal=allowed_meal,
         portion_met=portion_met,

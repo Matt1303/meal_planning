@@ -115,19 +115,12 @@ optimizer:
   fiber_weekly_min: null
   weekly_group_portions_min: {}
   include_non_plant: false
-  # Cooked-weight rice lines resolve to the "cooked rice" canonical (see
-  # ingredient_overrides.csv), which is valued at cooked calories. For the
-  # shopping list those cooked weights convert back to the dry weight you
-  # actually buy, hence the 3:1 ratio.
-  # NB: the per-person grams below are no longer applied to nutrition — each
-  # person's share of a dish now comes from household.shared_portion_min/max,
-  # which scales the whole meal rather than rice alone.
-  per_person_portions:
-    - canonicals: [cooked rice]
-      value_as: cooked rice
-      estimated_only: true
-      cooked_to_raw_ratio: 3
-      grams: {matt: 400, ellie: 200}
+  # Canonicals whose grams are a cooked weight, and the cooked:raw ratio used to
+  # buy the right amount. Rice and pasta lines resolve to these via
+  # ingredient_overrides.csv and are valued at cooked calories.
+  cooked_to_raw_ratios:
+    cooked rice: 3
+    cooked pasta: 2.2
 
 household:
   # When non-empty, the optimiser solves for the listed profiles jointly:

@@ -237,8 +237,7 @@ def fetch_recipe_serving_grams(conn: Connection) -> dict[int, Decimal]:
 def delete_cache(conn: Connection, ingredient_canonical: str) -> None:
     conn.execute(
         text(
-            "DELETE FROM meal_planning.ingredient_nutrition_cache "
-            "WHERE ingredient_canonical = :c"
+            "DELETE FROM meal_planning.ingredient_nutrition_cache WHERE ingredient_canonical = :c"
         ),
         {"c": ingredient_canonical},
     )

@@ -158,11 +158,11 @@ def build_shopping_list(
     # Grams are treated as raw/uncooked purchase weights, except canonicals that
     # are inherently a cooked weight (e.g. cooked rice), which convert to the raw
     # weight you buy.
-    cooked_ratio: dict[str, float] = {}
-    for spec in settings.optimizer.per_person_portions:
-        if spec.cooked_to_raw_ratio:
-            for canonical in spec.canonicals:
-                cooked_ratio[canonical.strip().lower()] = spec.cooked_to_raw_ratio
+    cooked_ratio = {
+        canonical.strip().lower(): ratio
+        for canonical, ratio in settings.optimizer.cooked_to_raw_ratios.items()
+        if ratio
+    }
 
     # Merge singular/plural variants (avocado + avocados) into one line, summing
     # quantities; display the dominant spelling.

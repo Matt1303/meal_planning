@@ -95,26 +95,6 @@ class NutritionSettings(BaseModel):
     llm_macros_min_confidence: str = Field(default="medium", pattern="^(high|medium|low)$")
 
 
-class PerPersonPortion(BaseModel):
-    """A per-person serving-size override for a set of ingredient canonicals.
-
-    grams maps profile name -> grams the person eats per serving. value_as names
-    the canonical whose cached per-100g values to nutritionally value the portion
-    with (e.g. "cooked rice" for cooked-weight rice defaults that resolve to dry
-    rice canonicals). estimated_only restricts the override to no-quantity
-    (default-portion) lines, leaving recipe-specified amounts untouched.
-    """
-
-    canonicals: list[str]
-    grams: dict[str, float]
-    value_as: str | None = None
-    estimated_only: bool = True
-    # Cooked:raw weight ratio for the shopping list (these default portions are
-    # cooked weights; divide by this to get the raw/dry weight you buy, e.g. 3
-    # for rice). None leaves the weight unchanged.
-    cooked_to_raw_ratio: float | None = None
-
-
 class OptimizerSettings(BaseModel):
     min_rating: float = Field(default=3, ge=0, le=5)
     rating_weight: float = 1.0
@@ -155,10 +135,11 @@ class OptimizerSettings(BaseModel):
     spacing_penalty_by_gap: dict[int, float] = Field(
         default_factory=lambda: {1: 1.0, 2: 0.3, 3: 0.1}
     )
-    # Per-person serving sizes that override the shared per-serving amount for
-    # specific ingredients in the solver and per-person macros (e.g. rice 400 g
-    # Matt / 200 g Ellie). See PerPersonPortion.
-    per_person_portions: list[PerPersonPortion] = Field(default_factory=list)
+    # Canonicals whose grams are a cooked weight, mapped to their cooked:raw
+    # ratio, so the shopping list buys the raw weight (cooked rice 3:1). The
+    # per-person half of the old per_person_portions block is gone: each
+    # person's share of a dish now comes from household.shared_portion_min/max.
+    cooked_to_raw_ratios: dict[str, float] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _validate_ranges(self) -> OptimizerSettings:
