@@ -128,19 +128,30 @@ def _targets_for(opt: OptimizerSettings, profile: ProfileTargets | None) -> Prof
     )
 
 
+# A shortfall smaller than this isn't worth a snack, and is usually just
+# floating-point residue from the solver meeting a target near-exactly (a plan
+# landing on 179.98 g of a 180 g goal was reporting a shortfall of 0.02 g, which
+# the one-decimal display then rendered as the self-contradictory "~0 g").
+MIN_REPORTABLE_KCAL_GAP = 25.0
+MIN_REPORTABLE_GRAM_GAP = 2.0
+
+
+def _shortfall(actual: float, target: float | None, minimum: float) -> float:
+    """How far actual falls below target, ignoring differences too small to act on."""
+    if target is None:
+        return 0.0
+    gap = float(target) - actual
+    return gap if gap >= minimum else 0.0
+
+
 def compute_gaps(
     day_kcal: float, day_fiber_g: float, day_protein_g: float, targets: ProfileTargets
 ) -> NutritionGaps:
-    kcal_gap = 0.0
-    fiber_gap = 0.0
-    protein_gap = 0.0
-    if targets.calories_daily_min is not None and day_kcal < float(targets.calories_daily_min):
-        kcal_gap = float(targets.calories_daily_min) - day_kcal
-    if targets.fiber_daily_min is not None and day_fiber_g < float(targets.fiber_daily_min):
-        fiber_gap = float(targets.fiber_daily_min) - day_fiber_g
-    if targets.protein_daily_min is not None and day_protein_g < float(targets.protein_daily_min):
-        protein_gap = float(targets.protein_daily_min) - day_protein_g
-    return NutritionGaps(kcal=kcal_gap, fiber_g=fiber_gap, protein_g=protein_gap)
+    return NutritionGaps(
+        kcal=_shortfall(day_kcal, targets.calories_daily_min, MIN_REPORTABLE_KCAL_GAP),
+        fiber_g=_shortfall(day_fiber_g, targets.fiber_daily_min, MIN_REPORTABLE_GRAM_GAP),
+        protein_g=_shortfall(day_protein_g, targets.protein_daily_min, MIN_REPORTABLE_GRAM_GAP),
+    )
 
 
 def _f(value: Decimal | float | None) -> float:
