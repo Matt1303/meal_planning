@@ -132,13 +132,27 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
     # within the calorie band (counts toward both protein and calories).
     whey_enabled = settings.topup.enabled and bool(profile_names)
     if whey_enabled:
-        # Continuous for solver speed; rounded to whole scoops at extraction.
         model.whey = Var(
             model.P,
             model.D,
             domain=NonNegativeReals,
             bounds=(0, settings.topup.max_whey_scoops),
         )
+        # Semi-continuous: a shake is either not made or is at least one scoop.
+        # Without the floor the solver shaves protein with a tenth of a scoop,
+        # which is 2.5 g of powder and not something anyone measures out.
+        min_scoops = settings.topup.min_whey_scoops
+        if min_scoops > 0:
+            model.whey_used = Var(model.P, model.D, domain=Binary)
+
+            def whey_floor_rule(m: Any, p: str, d: int) -> Any:
+                return m.whey[p, d] >= min_scoops * m.whey_used[p, d]
+
+            def whey_ceiling_rule(m: Any, p: str, d: int) -> Any:
+                return m.whey[p, d] <= settings.topup.max_whey_scoops * m.whey_used[p, d]
+
+            model.whey_floor = Constraint(model.P, model.D, rule=whey_floor_rule)
+            model.whey_ceiling = Constraint(model.P, model.D, rule=whey_ceiling_rule)
 
     model.slack_group = Var(model.P, model.D, model.G, domain=NonNegativeReals)
     model.slack_weekly_group = Var(model.P, model.G, domain=NonNegativeReals)

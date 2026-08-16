@@ -295,6 +295,11 @@ class TopUpSettings(BaseModel):
     whey_carbs_g: float = 2.7
     whey_fiber_g: float = 0.0
     max_whey_scoops: int = 6
+    # If a shake is made at all, make a real one. Below this the solver was
+    # allocating amounts nobody would measure out — a tenth of a scoop is 2.5 g
+    # of powder for 6 kcal. Zero is always still allowed; the protein floor is
+    # soft, so a day that can't justify a whole scoop simply goes without.
+    min_whey_scoops: float = Field(default=1.0, ge=0)
     # Small objective penalty per whey scoop so the solver prefers real food but
     # still allocates whey to hit the protein floor within the calorie band.
     whey_solver_penalty: float = 1.0

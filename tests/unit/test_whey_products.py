@@ -51,3 +51,11 @@ def test_default_whey_round_trips_the_flat_topup_fields() -> None:
 @pytest.mark.unit
 def test_a_profile_override_is_optional() -> None:
     assert ProfileTargets(name="x").whey is None
+
+
+@pytest.mark.unit
+def test_whey_has_a_one_scoop_floor() -> None:
+    # Either no shake, or a real one. A tenth of a scoop is 2.5 g of powder and
+    # not something anyone measures out; the protein floor is soft, so a day
+    # that can't justify a whole scoop goes without rather than shaving one.
+    assert Settings.load(Path("config/pipeline.yaml")).topup.min_whey_scoops == 1.0
