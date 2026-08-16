@@ -114,7 +114,7 @@ def parse_cmd(config: Path = typer.Option(Path("config/pipeline.yaml"), "--confi
     if pending:
         typer.echo(
             f"\n{len(pending)} recipe(s) have quantity-less lines not yet reviewed for "
-            f"section headings — run 'meal-planner review headings' to list them."
+            f"section headings — run 'meal-planner review' to list them."
         )
 
 
@@ -183,14 +183,37 @@ def health() -> None:
         raise typer.Exit(code=1)
 
 
+def _open_when_serving(url: str, address: str, port: int, timeout: float = 30.0) -> None:
+    """Open the browser once the server accepts connections.
+
+    Streamlit only opens a browser itself when it isn't headless, but headless
+    is what stops its first-run email prompt blocking startup. So keep the
+    prompt suppressed and do the opening here, once there's something to show.
+    """
+    import socket
+    import time
+    import webbrowser
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((address, port), timeout=0.5):
+                webbrowser.open(url)
+                return
+        except OSError:
+            time.sleep(0.3)
+
+
 @app.command("ui")
 def ui(
     port: int = typer.Option(8501, "--port"),
     address: str = typer.Option("127.0.0.1", "--address"),
+    open_browser: bool = typer.Option(True, "--open/--no-open", help="Open a browser once ready"),
 ) -> None:
     import os
     import subprocess
     import sys
+    import threading
     from importlib.util import find_spec
 
     if find_spec("streamlit") is None:
@@ -209,11 +232,18 @@ def ui(
         address,
         "--server.port",
         str(port),
+        # Headless suppresses Streamlit's first-run email prompt, which
+        # otherwise blocks startup. The browser is opened below instead.
         "--server.headless",
         "true",
     ]
     env = os.environ.copy()
     env.setdefault("PYTHONPATH", str(repo_root / "src"))
+
+    url = f"http://{address}:{port}"
+    typer.echo(f"Starting the dashboard at {url}")
+    if open_browser:
+        threading.Thread(target=_open_when_serving, args=(url, address, port), daemon=True).start()
     raise typer.Exit(code=subprocess.run(cmd, env=env, check=False).returncode)
 
 
