@@ -195,6 +195,10 @@ class ProfileTargets(BaseModel):
     # both at 1.0 to always serve the full portion.
     shared_portion_min: float = Field(default=1.0, ge=0.1, le=3.0)
     shared_portion_max: float = Field(default=1.0, ge=0.1, le=3.0)
+    # The protein powder this person actually drinks. Unset means the household
+    # default in topup.* — people don't necessarily use the same product, and
+    # the macros differ enough to matter (85 vs 95 kcal a scoop here).
+    whey: WheyProduct | None = None
 
     @model_validator(mode="after")
     def _validate_ranges(self) -> ProfileTargets:
@@ -264,6 +268,18 @@ class TopUpFruit(BaseModel):
     emoji: str = "🍎"
 
 
+class WheyProduct(BaseModel):
+    """Per-scoop macros from a protein powder's label."""
+
+    label: str = "Whey protein shake (water)"
+    scoop_grams: float = Field(default=30.0, gt=0)
+    kcal: float = Field(default=114.0, ge=0)
+    protein_g: float = Field(default=22.0, ge=0)
+    fat_g: float = Field(default=1.8, ge=0)
+    carbs_g: float = Field(default=2.7, ge=0)
+    fiber_g: float = Field(default=0.0, ge=0)
+
+
 class TopUpSettings(BaseModel):
     """Post-solve gap-fillers: a whey shake for protein, fruit for the fruit
     Daily Dozen categories. Shown as guaranteed 'Top-up' snacks on a day that
@@ -283,6 +299,18 @@ class TopUpSettings(BaseModel):
     # still allocates whey to hit the protein floor within the calorie band.
     whey_solver_penalty: float = 1.0
     fruits: list[TopUpFruit] = Field(default_factory=list)
+
+    @property
+    def default_whey(self) -> WheyProduct:
+        return WheyProduct(
+            label=self.whey_label,
+            scoop_grams=self.whey_scoop_grams,
+            kcal=self.whey_kcal,
+            protein_g=self.whey_protein_g,
+            fat_g=self.whey_fat_g,
+            carbs_g=self.whey_carbs_g,
+            fiber_g=self.whey_fiber_g,
+        )
 
 
 class Settings(BaseSettings):
@@ -305,6 +333,18 @@ class Settings(BaseSettings):
     daily_dozen_targets: dict[str, int] = Field(default_factory=dict)
     # keyword -> supermarket section, for the confirmed-plan shopping list.
     shopping_sections_path: Path = Path("config/supermarket_sections.csv")
+
+    def whey_for(self, profile_name: str) -> WheyProduct:
+        """The powder this person drinks, falling back to the household default.
+
+        The solver allocates scoops per person, so the macros have to be
+        per-person too — costing a scoop at the wrong product's calories would
+        put the day's total out by the difference.
+        """
+        for profile in self.household.profiles:
+            if profile.name == profile_name and profile.whey is not None:
+                return profile.whey
+        return self.topup.default_whey
 
     @field_validator("portion_sizes")
     @classmethod

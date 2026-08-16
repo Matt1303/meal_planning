@@ -155,6 +155,17 @@ household:
       # she inherits portions sized for a 3300 kcal day.
       shared_portion_min: 0.75
       shared_portion_max: 0.75
+      # Clear whey rather than the household default — she prefers it, and it
+      # is leaner per scoop (85 vs 95 kcal), so the solver has to cost her
+      # scoops at these numbers or her calorie total drifts.
+      whey:
+        label: "Clear whey (raspberry lemonade, water)"
+        scoop_grams: 25
+        kcal: 85
+        protein_g: 20
+        fat_g: 0.9
+        carbs_g: 0.9
+        fiber_g: 0
   # One serving each on average, redistributed 1.25 / 0.75. Each dish is cooked
   # once and eaten twice (leftover_pairing), so a 4-serving batch is finished
   # exactly, none binned.

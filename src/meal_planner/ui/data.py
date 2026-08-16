@@ -15,6 +15,7 @@ from meal_planner.config import (
     Settings,
     TopUpFruit,
     TopUpSettings,
+    WheyProduct,
 )
 from meal_planner.db import get_engine
 
@@ -132,8 +133,8 @@ def _targets_for(opt: OptimizerSettings, profile: ProfileTargets | None) -> Prof
 # floating-point residue from the solver meeting a target near-exactly (a plan
 # landing on 179.98 g of a 180 g goal was reporting a shortfall of 0.02 g, which
 # the one-decimal display then rendered as the self-contradictory "~0 g").
-MIN_REPORTABLE_KCAL_GAP = 25.0
-MIN_REPORTABLE_GRAM_GAP = 2.0
+MIN_REPORTABLE_KCAL_GAP = 100.0
+MIN_REPORTABLE_GRAM_GAP = 10.0
 
 
 def _shortfall(actual: float, target: float | None, minimum: float) -> float:
@@ -377,22 +378,22 @@ def _meal_dozen(lines: list[IngredientLine], dozen_groups: set[str]) -> dict[str
     return dict(out)
 
 
-def _whey_meal(topup: TopUpSettings, scoops: float) -> MealEntry:
+def _whey_meal(whey: WheyProduct, scoops: float) -> MealEntry:
     shown = f"{scoops:.0f}" if abs(scoops - round(scoops)) < 0.05 else f"{scoops:.1f}"
-    grams = scoops * topup.whey_scoop_grams
+    grams = scoops * whey.scoop_grams
     return MealEntry(
         meal_type="topup",
-        title=f"{topup.whey_label} — {shown} scoop{'' if shown == '1' else 's'}",
+        title=f"{whey.label} — {shown} scoop{'' if shown == '1' else 's'}",
         recipe_id=None,
-        kcal=scoops * topup.whey_kcal,
-        fiber_g=scoops * topup.whey_fiber_g,
-        protein_g=scoops * topup.whey_protein_g,
-        fat_g=scoops * topup.whey_fat_g,
-        carbs_g=scoops * topup.whey_carbs_g,
+        kcal=scoops * whey.kcal,
+        fiber_g=scoops * whey.fiber_g,
+        protein_g=scoops * whey.protein_g,
+        fat_g=scoops * whey.fat_g,
+        carbs_g=scoops * whey.carbs_g,
         is_topup=True,
         detail=(
-            f"{shown} × {topup.whey_scoop_grams:.0f} g scoop ({grams:.0f} g) with water "
-            f"(+{scoops * topup.whey_protein_g:.0f} g protein) — allocated by the optimiser"
+            f"{shown} × {whey.scoop_grams:.0f} g scoop ({grams:.0f} g) with water "
+            f"(+{scoops * whey.protein_g:.0f} g protein) — allocated by the optimiser"
         ),
     )
 
@@ -630,7 +631,8 @@ def load_plan_view(
             # the calorie band) — show it as a meal so totals reconcile.
             scoops = whey_by_day_profile.get((day_int, profile_id), 0.0)
             if scoops > 0.05 and topup_cfg.enabled:
-                combined.append(_whey_meal(topup_cfg, scoops))
+                whey = settings.whey_for(name) if settings is not None else topup_cfg.default_whey
+                combined.append(_whey_meal(whey, scoops))
 
             day_dozen: dict[str, dict[str, float]] = defaultdict(dict)
             for m in combined:

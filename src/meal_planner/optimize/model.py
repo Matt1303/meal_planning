@@ -430,10 +430,12 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
         model.weekly_group_min = Constraint(model.P, model.G, rule=weekly_group_rule)
 
     def _whey_kcal(m: Any, p: str, d: int) -> Any:
-        return m.whey[p, d] * settings.topup.whey_kcal if whey_enabled else 0
+        # Per person: the household may drink different products, and a scoop of
+        # one can be worth 10 kcal more than a scoop of another.
+        return m.whey[p, d] * settings.whey_for(p).kcal if whey_enabled else 0
 
     def _whey_protein(m: Any, p: str, d: int) -> Any:
-        return m.whey[p, d] * settings.topup.whey_protein_g if whey_enabled else 0
+        return m.whey[p, d] * settings.whey_for(p).protein_g if whey_enabled else 0
 
     if options.enforce_daily_kcal:
         kcal = prepared.kcal

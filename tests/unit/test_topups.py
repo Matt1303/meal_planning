@@ -69,7 +69,9 @@ def test_meal_dozen_caps_a_generous_single_food_at_one() -> None:
 
 @pytest.mark.unit
 def test_whey_meal_macros_and_label() -> None:
-    meal = _whey_meal(_topup(), 3)
+    # _whey_meal takes the resolved product now, since the household may drink
+    # different powders; default_whey is the household-wide one.
+    meal = _whey_meal(_topup().default_whey, 3)
     assert "3 scoops" in (meal.title or "")
     assert meal.protein_g == pytest.approx(54.0)  # 3 × 18
     assert meal.kcal == pytest.approx(285.0)  # 3 × 95

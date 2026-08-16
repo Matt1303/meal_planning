@@ -157,7 +157,6 @@ def write_plan(settings: Settings, result: OptimizeResult, *, engine: Engine | N
                     per_profile_recipes.setdefault(owner, []).append((recipe_id, 1.0))
 
             day_household = [Decimal(0)] * 5
-            topup = settings.topup
             for profile_name in profile_names:
                 profile_id = profile_ids[profile_name]
                 totals = [Decimal(0)] * 5
@@ -179,14 +178,9 @@ def write_plan(settings: Settings, result: OptimizeResult, *, engine: Engine | N
                 # protein, fat, carbs).
                 scoops = result.whey.get((profile_name, day), 0.0)
                 if scoops:
+                    whey = settings.whey_for(profile_name)
                     for i, per_scoop in enumerate(
-                        (
-                            topup.whey_kcal,
-                            topup.whey_fiber_g,
-                            topup.whey_protein_g,
-                            topup.whey_fat_g,
-                            topup.whey_carbs_g,
-                        )
+                        (whey.kcal, whey.fiber_g, whey.protein_g, whey.fat_g, whey.carbs_g)
                     ):
                         totals[i] += Decimal(str(scoops * per_scoop))
                 insert_plan_day_profile(
