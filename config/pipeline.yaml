@@ -106,7 +106,13 @@ optimizer:
   snack_category_limits:
     smoothie: 1
   max_recipe_repeats: 2
-  solver_time_limit: 300
+  # Measured: at 300 s the search sits at a 0.64 MIP gap and returns whatever
+  # incumbent it happens to hold, so two runs on identical config gave total
+  # slack of 313 and 615. At 1200 s the gap is 0.43 and the plan meets every
+  # target for both people. It still does not converge — the gap closes roughly
+  # logarithmically — so this buys a better plan, not a proven one. Lower it
+  # when iterating on config; the pipeline is a weekly job.
+  solver_time_limit: 1200
   solver_mip_gap: 0.05
   # 8 days (even) so each shared lunch/dinner dish can be paired: cooked fresh
   # once and eaten as leftovers once (leftover_pairing below).
