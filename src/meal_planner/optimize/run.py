@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass, field
 from enum import IntEnum
@@ -154,7 +155,7 @@ def optimize_plan(settings: Settings, *, engine: Engine | None = None) -> Optimi
         model = build_model(prepared, settings, options)
         start = time.time()
         try:
-            condition, loaded = _solve_model(model, solver_name, settings)
+            condition, loaded, mip_gap = _solve_model(model, solver_name, settings)
         except Exception as exc:
             last_error = str(exc)
             log.warning("optimize.solver_error", relaxation=level.name, error=last_error)
@@ -195,6 +196,7 @@ def optimize_plan(settings: Settings, *, engine: Engine | None = None) -> Optimi
                 seconds=seconds,
                 slack_total=slack,
                 condition=condition,
+                mip_gap=round(mip_gap, 4) if mip_gap is not None else None,
             )
             return OptimizeResult(
                 plan=plan,
@@ -253,10 +255,38 @@ def _termination_of(results: Any) -> str:
     return str(getattr(results, "termination_condition", "unknown"))
 
 
-def _solve_model(model: Any, solver_name: str, settings: Settings) -> tuple[str, bool]:
+def _relative_gap(results: Any) -> float | None:
+    """How far the returned plan could be from the best possible one.
+
+    Without it a time-limited run is unreadable: a plan half a percent off the
+    optimum and one forty percent off both just report "maxTimeLimit".
+    """
+    incumbent = getattr(results, "best_feasible_objective", None)
+    bound = getattr(results, "best_objective_bound", None)
+    if incumbent is None or bound is None:
+        # appsi_highs hands back a legacy SolverResults despite the APPSI API,
+        # so the bounds are in the Problem section rather than on the object.
+        try:
+            problem = results["Problem"][0]
+            incumbent = float(problem["Lower bound"])
+            bound = float(problem["Upper bound"])
+        except (KeyError, IndexError, TypeError, ValueError):
+            return None
+    try:
+        incumbent, bound = float(incumbent), float(bound)
+    except (TypeError, ValueError):
+        return None
+    if not (math.isfinite(incumbent) and math.isfinite(bound)) or abs(incumbent) < 1e-9:
+        return None
+    return float(abs(bound - incumbent) / abs(incumbent))
+
+
+def _solve_model(
+    model: Any, solver_name: str, settings: Settings
+) -> tuple[str, bool, float | None]:
     """Solve with either an APPSI backend (HiGHS) or a legacy shell solver (glpk).
 
-    Returns (termination condition, whether a solution was loaded onto the model).
+    Returns (termination condition, whether a solution was loaded, relative gap).
     """
     time_limit = settings.optimizer.solver_time_limit
     gap = settings.optimizer.solver_mip_gap
@@ -273,11 +303,12 @@ def _solve_model(model: Any, solver_name: str, settings: Settings) -> tuple[str,
             native["mip_rel_gap"] = float(gap)
         results = solver.solve(model)
         condition = _termination_of(results)
+        achieved_gap = _relative_gap(results)
         try:
             solver.load_vars()
         except Exception:
-            return condition, False
-        return condition, True
+            return condition, False, achieved_gap
+        return condition, True, achieved_gap
 
     solver = SolverFactory(solver_name)
     try:
@@ -286,7 +317,7 @@ def _solve_model(model: Any, solver_name: str, settings: Settings) -> tuple[str,
     except Exception:
         pass
     results = solver.solve(model, tee=False)
-    return _termination_of(results), True
+    return _termination_of(results), True, None
 
 
 def _plan_complete(plan: dict[int, dict[str, PlanCell]], prepared: PreparedData) -> bool:
