@@ -183,6 +183,23 @@ def write_plan(settings: Settings, result: OptimizeResult, *, engine: Engine | N
                         (whey.kcal, whey.fiber_g, whey.protein_g, whey.fat_g, whey.carbs_g)
                     ):
                         totals[i] += Decimal(str(scoops * per_scoop))
+                # Habitual weekday items (a coffee) are part of the day's intake,
+                # so the stored totals have to include what the solver planned
+                # around.
+                targets_for_profile = configured_by_name.get(profile_name)
+                if targets_for_profile is not None:
+                    for extra in targets_for_profile.fixed_extras:
+                        if day in extra.days_within(settings.optimizer.planning_horizon_days):
+                            for i, value in enumerate(
+                                (
+                                    extra.kcal,
+                                    extra.fiber_g,
+                                    extra.protein_g,
+                                    extra.fat_g,
+                                    extra.carbs_g,
+                                )
+                            ):
+                                totals[i] += Decimal(str(value))
                 insert_plan_day_profile(
                     conn,
                     plan_run_id=plan_run_id,

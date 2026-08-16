@@ -9,6 +9,7 @@ from decimal import Decimal
 from sqlalchemy import Engine, text
 
 from meal_planner.config import (
+    FixedExtra,
     HouseholdSettings,
     OptimizerSettings,
     ProfileTargets,
@@ -378,6 +379,23 @@ def _meal_dozen(lines: list[IngredientLine], dozen_groups: set[str]) -> dict[str
     return dict(out)
 
 
+def _extra_meal(extra: FixedExtra) -> MealEntry:
+    """A habitual weekday item shown as its own entry so the day's meals add up
+    to the day's totals — the solver planned the rest of the day around it."""
+    return MealEntry(
+        meal_type="topup",
+        title=extra.name,
+        recipe_id=None,
+        kcal=extra.kcal,
+        fiber_g=extra.fiber_g,
+        protein_g=extra.protein_g,
+        fat_g=extra.fat_g,
+        carbs_g=extra.carbs_g,
+        is_topup=True,
+        detail=extra.note or "a regular on this day — planned around, not chosen",
+    )
+
+
 def _whey_meal(whey: WheyProduct, scoops: float) -> MealEntry:
     shown = f"{scoops:.0f}" if abs(scoops - round(scoops)) < 0.05 else f"{scoops:.1f}"
     grams = scoops * whey.scoop_grams
@@ -626,6 +644,15 @@ def load_plan_view(
                 for m in shared
             ]
             combined = [_enrich(m, name) for m in (shared_for_profile + user_meals)]
+
+            targets_for_profile = targets_by_name.get(name)
+            if targets_for_profile is not None:
+                horizon = opt.planning_horizon_days
+                combined += [
+                    _extra_meal(extra)
+                    for extra in targets_for_profile.fixed_extras
+                    if day_int in extra.days_within(horizon)
+                ]
 
             # Whey the optimiser allocated for this person/day (protein within
             # the calorie band) — show it as a meal so totals reconcile.

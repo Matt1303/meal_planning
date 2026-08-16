@@ -155,6 +155,18 @@ household:
       # she inherits portions sized for a 3300 kcal day.
       shared_portion_min: 0.75
       shared_portion_max: 0.75
+      # Iced coffee on Mon/Wed/Thu/Sat. Totals of Califia barista oat milk
+      # 300 ml (162 kcal), Monin caramel syrup 15 ml (49) and Fortnum's
+      # Sandringham blend 9 tsp (36). Fibre isn't on any of the labels.
+      fixed_extras:
+        - name: "Iced coffee (oat milk, caramel syrup)"
+          weekdays: [mon, wed, thu, sat]
+          kcal: 247
+          protein_g: 2.4
+          fat_g: 9.6
+          carbs_g: 36.7
+          fiber_g: 0
+          note: "300 ml oat milk + 15 ml caramel syrup + 9 tsp coffee"
       # Clear whey rather than the household default — she prefers it, and it
       # is leaner per scoop (85 vs 95 kcal), so the solver has to cost her
       # scoops at these numbers or her calorie total drifts.

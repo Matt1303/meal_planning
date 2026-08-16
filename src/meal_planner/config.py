@@ -199,6 +199,9 @@ class ProfileTargets(BaseModel):
     # default in topup.* — people don't necessarily use the same product, and
     # the macros differ enough to matter (85 vs 95 kcal a scoop here).
     whey: WheyProduct | None = None
+    # Habitual items on set weekdays (a coffee, say) that the planned meals
+    # have to fit around. See FixedExtra.
+    fixed_extras: list[FixedExtra] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _validate_ranges(self) -> ProfileTargets:
@@ -266,6 +269,44 @@ class TopUpFruit(BaseModel):
     fat_g: float = 0.0
     carbs_g: float = 0.0
     emoji: str = "🍎"
+
+
+_WEEKDAY_ORDER = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+class FixedExtra(BaseModel):
+    """Something a person has on set weekdays, outside the planned meals.
+
+    A daily coffee isn't a meal the optimiser chooses — it's a fixed load on
+    those days that the rest of the day has to fit around. Modelled as a
+    constant in the nutrition constraints rather than a decision variable.
+    """
+
+    name: str
+    weekdays: list[str]
+    kcal: float = Field(default=0.0, ge=0)
+    protein_g: float = Field(default=0.0, ge=0)
+    fat_g: float = Field(default=0.0, ge=0)
+    carbs_g: float = Field(default=0.0, ge=0)
+    fiber_g: float = Field(default=0.0, ge=0)
+    note: str = ""
+
+    @field_validator("weekdays")
+    @classmethod
+    def _known_weekdays(cls, value: list[str]) -> list[str]:
+        for day in value:
+            if day.strip().lower()[:3] not in _WEEKDAY_ORDER:
+                raise ValueError(f"unknown weekday {day!r}; use names like 'mon' or 'Monday'")
+        return value
+
+    def days_within(self, horizon_days: int) -> set[int]:
+        """Plan day numbers this falls on. Day 1 is a Monday, matching
+        confirm_plan, which schedules day d as week_start + (d - 1) from a
+        Monday. A horizon longer than a week repeats the weekday."""
+        wanted = {d.strip().lower()[:3] for d in self.weekdays}
+        return {
+            day for day in range(1, horizon_days + 1) if _WEEKDAY_ORDER[(day - 1) % 7] in wanted
+        }
 
 
 class WheyProduct(BaseModel):

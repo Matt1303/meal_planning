@@ -443,6 +443,23 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
 
         model.weekly_group_min = Constraint(model.P, model.G, rule=weekly_group_rule)
 
+    # Habitual items on set weekdays (Ellie's iced coffee) — a constant the
+    # planned meals have to fit around, not something the solver picks.
+    extras: dict[tuple[str, int], dict[str, float]] = {}
+    for profile_targets in settings.household.profiles:
+        for extra in profile_targets.fixed_extras:
+            for day in extra.days_within(opt.planning_horizon_days):
+                bucket = extras.setdefault((profile_targets.name, day), {})
+                for macro, value in (
+                    ("kcal", extra.kcal),
+                    ("protein_g", extra.protein_g),
+                    ("fiber_g", extra.fiber_g),
+                ):
+                    bucket[macro] = bucket.get(macro, 0.0) + value
+
+    def _extra(p: str, d: int, macro: str) -> float:
+        return extras.get((p, d), {}).get(macro, 0.0)
+
     def _whey_kcal(m: Any, p: str, d: int) -> Any:
         # Per person: the household may drink different products, and a scoop of
         # one can be worth 10 kcal more than a scoop of another.
@@ -462,6 +479,7 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
             # protein far above target. It still counts toward the ceiling below.
             return (
                 sum(kcal[r] * _user_servings_on_day(m, profile, r, d, prepared) for r in m.R)
+                + _extra(p, d, "kcal")
                 + m.slack_cal_min[p, d]
                 >= profile.calories_daily_min
             )
@@ -476,6 +494,7 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
             return (
                 sum(kcal[r] * _user_servings_on_day(m, profile, r, d, prepared) for r in m.R)
                 + _whey_kcal(m, p, d)
+                + _extra(p, d, "kcal")
                 - m.slack_cal_max[p, d]
                 <= profile.calories_daily_max
             )
@@ -492,6 +511,7 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
             profile = profiles_by_name[p]
             return (
                 sum(fiber[r] * _user_servings_on_day(m, profile, r, d, prepared) for r in m.R)
+                + _extra(p, d, "fiber_g")
                 + m.slack_fiber_min[p, d]
                 >= profile.fiber_daily_min
             )
@@ -509,6 +529,7 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
             return (
                 sum(protein[r] * _user_servings_on_day(m, profile, r, d, prepared) for r in m.R)
                 + _whey_protein(m, p, d)
+                + _extra(p, d, "protein_g")
                 + m.slack_protein_min[p, d]
                 >= profile.protein_daily_min
             )
@@ -525,6 +546,7 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
             return (
                 sum(protein[r] * _user_servings_on_day(m, profile, r, d, prepared) for r in m.R)
                 + _whey_protein(m, p, d)
+                + _extra(p, d, "protein_g")
                 - m.slack_protein_max[p, d]
                 <= profile.protein_daily_max
             )
