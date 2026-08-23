@@ -151,3 +151,23 @@ def test_real_ingredients_are_not_headers(raw: str) -> None:
 def test_all_caps_recipe_keeps_its_ingredients() -> None:
     # A recipe typed entirely in capitals must not lose every line.
     assert not _is_section_header("LINGUINE", recipe_has_mixed_case=False)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("raw", "minutes"),
+    [
+        ("10 min", 10),
+        ("45 min", 45),
+        ("1 hr 30 min", 90),
+        ("2 hours", 120),
+        ("1 hour", 60),
+        ("", None),
+        (None, None),
+        ("a while", None),
+    ],
+)
+def test_paprika_time_strings_to_minutes(raw: str | None, minutes: int | None) -> None:
+    from meal_planner.ingest import parse_time_minutes
+
+    assert parse_time_minutes(raw) == minutes

@@ -27,6 +27,19 @@ from meal_planner.metrics import MetricName
 from meal_planner.plant import PlantClassifier
 from meal_planner.servings import parse_servings_count
 
+_TIME_PATTERN = re.compile(r"(?:(\d+)\s*(?:hr|hour)s?)?\s*(?:(\d+)\s*min)?", re.IGNORECASE)
+
+
+def parse_time_minutes(raw: str | None) -> int | None:
+    """Paprika time strings ("10 min", "1 hr 30 min", "2 hours") to minutes."""
+    if not raw or not raw.strip():
+        return None
+    m = _TIME_PATTERN.fullmatch(raw.strip())
+    if m is None or (m.group(1) is None and m.group(2) is None):
+        return None
+    return int(m.group(1) or 0) * 60 + int(m.group(2) or 0)
+
+
 log = get_logger(__name__)
 
 
@@ -83,6 +96,10 @@ def ingest_local_html(settings: Settings, *, engine: Engine | None = None) -> In
                     rating_val = None
 
             servings_count = parse_servings_count(servings)
+            prep_el = soup.select_one('span[itemprop="prepTime"]')
+            cook_el = soup.select_one('span[itemprop="cookTime"]')
+            prep_minutes = parse_time_minutes(prep_el.get_text(strip=True) if prep_el else None)
+            cook_minutes = parse_time_minutes(cook_el.get_text(strip=True) if cook_el else None)
             last_modified = datetime.fromtimestamp(fpath.stat().st_mtime, tz=UTC)
             ingredient_lines = _ingredient_lines(soup, selectors.ingredient_lines)
             declared = _parse_declared_nutrition(soup, selectors.nutrition)
@@ -103,6 +120,8 @@ def ingest_local_html(settings: Settings, *, engine: Engine | None = None) -> In
                 rating=rating_val,
                 servings=servings or None,
                 servings_count=servings_count,
+                prep_minutes=prep_minutes,
+                cook_minutes=cook_minutes,
                 difficulty=difficulty or None,
                 categories=categories or None,
                 source=relative_source,

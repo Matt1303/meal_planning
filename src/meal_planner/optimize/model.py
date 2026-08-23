@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -310,6 +311,25 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
             return expr == 1
 
         model.user_slot = Constraint(model.P, model.D, model.USER_M, rule=user_slot_rule)
+
+        # The snack slots are interchangeable — the same three snacks can land
+        # in slots (1,2,3) in any of six orders, and the solver had to explore
+        # them all as if they were different plans. Filling slots in order
+        # leaves exactly one arrangement per set of snacks.
+        ordered_snacks = sorted(s for s in snack_slot_set if "_" in s)
+        if len(ordered_snacks) > 1:
+            slot_pairs = list(itertools.pairwise(ordered_snacks))
+            model.SNACK_ORDER = Set(initialize=range(len(slot_pairs)))
+
+            def snack_order_rule(m: Any, p: str, d: int, i: int) -> Any:
+                earlier, later = slot_pairs[i]
+                return sum(m.x_user[p, r, d, later] for r in m.R) <= sum(
+                    m.x_user[p, r, d, earlier] for r in m.R
+                )
+
+            model.snack_fill_order = Constraint(
+                model.P, model.D, model.SNACK_ORDER, rule=snack_order_rule
+            )
 
         def user_allowed(m: Any, p: str, r: int, d: int, meal: str) -> Any:
             return m.x_user[p, r, d, meal] <= allowed_meal[(r, meal)]

@@ -13,6 +13,8 @@ def upsert_recipe(
     rating: Decimal | None,
     servings: str | None,
     servings_count: Decimal | None,
+    prep_minutes: int | None = None,
+    cook_minutes: int | None = None,
     difficulty: str | None,
     categories: str | None,
     source: str | None,
@@ -28,11 +30,13 @@ def upsert_recipe(
         text(
             """
             INSERT INTO meal_planning.recipe
-                (title, rating, servings, servings_count, difficulty, categories,
+                (title, rating, servings, servings_count, prep_minutes, cook_minutes,
+                 difficulty, categories,
                  source, last_modified, is_plant_based,
                  declared_kcal, declared_protein_g, declared_fiber_g,
                  declared_fat_g, declared_carbs_g)
-            VALUES (:title, :rating, :servings, :servings_count, :difficulty, :categories,
+            VALUES (:title, :rating, :servings, :servings_count, :prep_minutes, :cook_minutes,
+                    :difficulty, :categories,
                     :source, :last_modified, :is_plant_based,
                     :declared_kcal, :declared_protein_g, :declared_fiber_g,
                     :declared_fat_g, :declared_carbs_g)
@@ -40,6 +44,8 @@ def upsert_recipe(
                 rating = EXCLUDED.rating,
                 servings = EXCLUDED.servings,
                 servings_count = EXCLUDED.servings_count,
+                prep_minutes = EXCLUDED.prep_minutes,
+                cook_minutes = EXCLUDED.cook_minutes,
                 difficulty = EXCLUDED.difficulty,
                 categories = EXCLUDED.categories,
                 source = EXCLUDED.source,
@@ -58,6 +64,8 @@ def upsert_recipe(
             "rating": rating,
             "servings": servings,
             "servings_count": servings_count,
+            "prep_minutes": prep_minutes,
+            "cook_minutes": cook_minutes,
             "difficulty": difficulty,
             "categories": categories,
             "source": source,
