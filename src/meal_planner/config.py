@@ -98,6 +98,28 @@ class NutritionSettings(BaseModel):
     llm_macros_min_confidence: str = Field(default="medium", pattern="^(high|medium|low)$")
 
 
+class TimeBudgetSettings(BaseModel):
+    """Cap on kitchen time, from per-recipe prep/cook minutes.
+
+    Off by default: only ~28 of 189 recipes carry time data so far, and a
+    recipe without data counts as zero minutes — enabling the cap before the
+    data is mostly filled would just favour recipes nobody has timed yet.
+    """
+
+    enabled: bool = False
+    # Total cooking minutes across the horizon (fresh cooks only — a leftover
+    # pair is cooked once). None leaves the weekly total uncapped.
+    weekly_minutes: int | None = Field(default=None, gt=0)
+    # Cap per cooking day. None leaves sessions uncapped.
+    session_minutes: int | None = Field(default=None, gt=0)
+    # Recipes always take longer than they claim; scale every estimate.
+    time_multiplier: float = Field(default=1.5, ge=1.0)
+    # A microwave ready meal, regardless of what its recipe entry says.
+    ready_meal_minutes: int = Field(default=3, ge=0)
+    # Objective penalty per minute over budget (soft, like the calorie bands).
+    slack_weight: float = Field(default=1.0, ge=0)
+
+
 class OptimizerSettings(BaseModel):
     min_rating: float = Field(default=3, ge=0, le=5)
     rating_weight: float = 1.0
@@ -148,6 +170,16 @@ class OptimizerSettings(BaseModel):
     # per-person half of the old per_person_portions block is gone: each
     # person's share of a dish now comes from household.shared_portion_min/max.
     cooked_to_raw_ratios: dict[str, float] = Field(default_factory=dict)
+    time_budget: TimeBudgetSettings = Field(default_factory=TimeBudgetSettings)
+    # Paprika category marking a microwave ready meal (case-insensitive
+    # substring). Ready meals are exempt from leftover pairing (eaten once,
+    # not cooked-and-repeated), served as one full portion each rather than
+    # the household's split, and cost ready_meal_minutes of kitchen time.
+    ready_meal_category: str = "ready meal"
+    # Seed the solver with the latest stored plan as a MIP start. A good
+    # incumbent from minute zero tightens pruning; falls back to a cold start
+    # if the previous plan no longer fits the current config.
+    warm_start: bool = True
 
     @model_validator(mode="after")
     def _validate_ranges(self) -> OptimizerSettings:

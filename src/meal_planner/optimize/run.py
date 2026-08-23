@@ -22,6 +22,11 @@ from meal_planner.optimize.data import (
     prepare,
 )
 from meal_planner.optimize.model import ModelOptions, build_model, total_slack, variable_count
+from meal_planner.optimize.warmstart import (
+    apply_mip_start,
+    build_start_values,
+    load_previous_plan,
+)
 
 log = get_logger(__name__)
 
@@ -149,13 +154,28 @@ def optimize_plan(settings: Settings, *, engine: Engine | None = None) -> Optimi
         )
 
     solver_name = _resolve_solver_name(settings.optimizer.solver)
+
+    previous = load_previous_plan(eng) if settings.optimizer.warm_start else None
+
+    def start_values(model: Any) -> dict[int, tuple[Any, float]] | None:
+        if previous is None:
+            return None
+        values = build_start_values(
+            model, prepared, previous, float(settings.topup.min_whey_scoops)
+        )
+        if values is None:
+            log.info("optimize.warmstart_skipped", reason="previous plan no longer fits")
+        return values
+
     last_error: str = "not attempted"
     for level, options in _LEVELS:
         log.info("optimize.attempt", relaxation=level.name, solver=solver_name)
         model = build_model(prepared, settings, options)
         start = time.time()
         try:
-            condition, loaded, mip_gap = _solve_model(model, solver_name, settings)
+            condition, loaded, mip_gap = _solve_model(
+                model, solver_name, settings, start_values=start_values(model)
+            )
         except Exception as exc:
             last_error = str(exc)
             log.warning("optimize.solver_error", relaxation=level.name, error=last_error)
@@ -169,7 +189,7 @@ def optimize_plan(settings: Settings, *, engine: Engine | None = None) -> Optimi
         take = loaded and _plan_complete(plan, prepared)
         if take:
             whey = _extract_whey(model, prepared)
-            portions = _extract_portions(model, prepared)
+            portions = _extract_portions(model, prepared, plan)
             slack = total_slack(model, prepared)
             with eng.begin() as conn:
                 record_metric(
@@ -282,7 +302,10 @@ def _relative_gap(results: Any) -> float | None:
 
 
 def _solve_model(
-    model: Any, solver_name: str, settings: Settings
+    model: Any,
+    solver_name: str,
+    settings: Settings,
+    start_values: dict[int, tuple[Any, float]] | None = None,
 ) -> tuple[str, bool, float | None]:
     """Solve with either an APPSI backend (HiGHS) or a legacy shell solver (glpk).
 
@@ -301,6 +324,9 @@ def _solve_model(
         if native is not None:
             native["time_limit"] = float(time_limit)
             native["mip_rel_gap"] = float(gap)
+        if start_values:
+            seeded = apply_mip_start(solver, model, start_values)
+            log.info("optimize.warmstart", applied=seeded, values=len(start_values))
         results = solver.solve(model)
         condition = _termination_of(results)
         achieved_gap = _relative_gap(results)
@@ -350,20 +376,31 @@ def _extract_whey(model: Any, prepared: PreparedData) -> dict[tuple[str, int], f
     return out
 
 
-def _extract_portions(model: Any, prepared: PreparedData) -> dict[tuple[str, int, str], float]:
+def _extract_portions(
+    model: Any,
+    prepared: PreparedData,
+    plan: dict[int, dict[str, PlanCell]],
+) -> dict[tuple[str, int, str], float]:
     """Per-person servings of each shared dish.
 
     Profiles on a fixed portion have no variable — their share is the configured
     multiplier, reported here so macros, the plan view and the shopping list all
-    read servings from one place.
+    read servings from one place. A ready-meal slot is one full pot each, so it
+    stays at the default 1.0 rather than the household split.
     """
+
+    def _ready_slot(d: int, meal: str) -> bool:
+        recipe = plan.get(d, {}).get(meal, {}).get(SHARED_KEY)
+        return recipe is not None and recipe in prepared.ready_meal_ids
+
     out: dict[tuple[str, int, str], float] = {}
     for p in prepared.profiles:
         if not p.portion_is_flexible:
             if p.shared_portion_min != 1.0:
                 for d in prepared.days:
                     for meal in prepared.shared_meal_types:
-                        out[(p.name, d, meal)] = p.shared_portion_min
+                        if not _ready_slot(d, meal):
+                            out[(p.name, d, meal)] = p.shared_portion_min
             continue
         if not hasattr(model, "share"):
             continue

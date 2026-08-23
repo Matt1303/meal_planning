@@ -69,8 +69,10 @@ def _user_servings_on_day(m: Any, p: ProfileSpec, r: int, d: int, prepared: Prep
     else:
         # A fixed portion is just a coefficient on the dish binary — no variable
         # needed, which is why pinning the split solves far faster than letting
-        # the solver choose it.
-        shared_sum = p.shared_portion_min * sum(
+        # the solver choose it. Ready meals are the exception: a pot is a fixed
+        # single serving, so everyone eats exactly one regardless of the split.
+        coefficient = 1.0 if r in prepared.ready_meal_ids else p.shared_portion_min
+        shared_sum = coefficient * sum(
             m.x_shared[r, d, meal] for meal in prepared.shared_meal_types
         )
     user_sum = sum(m.x_user[p.name, r, d, meal] for meal in prepared.per_user_meal_types)
@@ -238,10 +240,12 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
             # Pin share to 0 for dishes not cooked, and into [min, max] for the
             # one that is. Exact because x_shared is binary.
             def share_upper_rule(m: Any, p: str, r: int, d: int, meal: str) -> Any:
-                return m.share[p, r, d, meal] <= portion_bounds[p][1] * m.x_shared[r, d, meal]
+                upper = 1.0 if r in prepared.ready_meal_ids else portion_bounds[p][1]
+                return m.share[p, r, d, meal] <= upper * m.x_shared[r, d, meal]
 
             def share_lower_rule(m: Any, p: str, r: int, d: int, meal: str) -> Any:
-                return m.share[p, r, d, meal] >= portion_bounds[p][0] * m.x_shared[r, d, meal]
+                lower = 1.0 if r in prepared.ready_meal_ids else portion_bounds[p][0]
+                return m.share[p, r, d, meal] >= lower * m.x_shared[r, d, meal]
 
             model.share_upper = Constraint(model.SHARE_KEYS, rule=share_upper_rule)
             model.share_lower = Constraint(model.SHARE_KEYS, rule=share_lower_rule)
@@ -404,9 +408,107 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
         model.leftover_used = Var(model.LEFTOVER, domain=Binary)
 
         def leftover_rule(m: Any, r: int, meal: str) -> Any:
+            if r in prepared.ready_meal_ids:
+                return Constraint.Skip
             return sum(m.x_shared[r, d, meal] for d in m.D) == 2 * m.leftover_used[r, meal]
 
         model.leftover_pairing = Constraint(model.LEFTOVER, rule=leftover_rule)
+
+    # --- Kitchen-time budget (optional; off until recipes carry time data) ---
+    tb = settings.optimizer.time_budget
+    minutes = prepared.cook_minutes
+    time_budget_active = (
+        tb.enabled
+        and bool(minutes)
+        and (tb.weekly_minutes is not None or tb.session_minutes is not None)
+    )
+    if time_budget_active:
+        ready = prepared.ready_meal_ids
+        timed_user = [r for r in prepared.recipes if minutes.get(r, 0) > 0]
+
+        def _user_cook_time(m: Any, d: int) -> Any:
+            # Per-person meals (breakfast, snacks) are made fresh each time.
+            return sum(
+                minutes[r] * m.x_user[p, r, d, mt]
+                for p in profile_names
+                for r in timed_user
+                for mt in prepared.per_user_meal_types
+            )
+
+        # A paired shared dish is cooked once per pair; the model doesn't say on
+        # which day, so the weekly total charges leftover_used and the session
+        # cap uses a "fresh" indicator forced up on the first appearance day.
+        if leftover_active:
+            paired_timed = [
+                (r, meal)
+                for r in timed_user
+                if r not in ready
+                for meal in prepared.shared_meal_types
+                if prepared.allowed_meal[(r, meal)]
+            ]
+        else:
+            paired_timed = []
+
+        def _shared_cook_time_weekly(m: Any) -> Any:
+            if leftover_active:
+                paired = sum(minutes[r] * m.leftover_used[r, meal] for r, meal in paired_timed)
+                unpaired = sum(
+                    minutes[r] * m.x_shared[r, d, meal]
+                    for r in timed_user
+                    if r in ready
+                    for d in prepared.days
+                    for meal in prepared.shared_meal_types
+                )
+                return paired + unpaired
+            return sum(
+                minutes[r] * m.x_shared[r, d, meal]
+                for r in timed_user
+                for d in prepared.days
+                for meal in prepared.shared_meal_types
+            )
+
+        if tb.weekly_minutes is not None:
+            model.slack_weekly_time = Var(domain=NonNegativeReals)
+            model.weekly_time = Constraint(
+                expr=_shared_cook_time_weekly(model)
+                + sum(_user_cook_time(model, d) for d in prepared.days)
+                <= tb.weekly_minutes + model.slack_weekly_time
+            )
+
+        if tb.session_minutes is not None:
+            if paired_timed:
+                model.FRESH = Set(initialize=paired_timed, dimen=2)
+                # Continuous: the lower bound below forces it to 1 exactly on
+                # the first day a paired dish appears, and budget pressure
+                # keeps it at that bound everywhere else.
+                model.fresh_cook = Var(model.FRESH, model.D, bounds=(0, 1))
+
+                def fresh_rule(m: Any, r: int, meal: str, d: int) -> Any:
+                    earlier = sum(m.x_shared[r, dd, meal] for dd in prepared.days if dd < d)
+                    return m.fresh_cook[r, meal, d] >= m.x_shared[r, d, meal] - earlier
+
+                model.fresh_link = Constraint(model.FRESH, model.D, rule=fresh_rule)
+
+            model.slack_session_time = Var(model.D, domain=NonNegativeReals)
+
+            def session_rule(m: Any, d: int) -> Any:
+                shared_today: Any = 0
+                if paired_timed:
+                    shared_today += sum(
+                        minutes[r] * m.fresh_cook[r, meal, d] for r, meal in paired_timed
+                    )
+                shared_today += sum(
+                    minutes[r] * m.x_shared[r, d, meal]
+                    for r in timed_user
+                    if (r in ready or not leftover_active)
+                    for meal in prepared.shared_meal_types
+                )
+                return (
+                    shared_today + _user_cook_time(m, d)
+                    <= tb.session_minutes + m.slack_session_time[d]
+                )
+
+            model.session_time = Constraint(model.D, rule=session_rule)
 
     def one_per_day_rule(m: Any, p: str, r: int, d: int) -> Any:
         profile = profiles_by_name[p]
@@ -711,6 +813,11 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
         whey_term: Any = 0
         if whey_enabled:
             whey_term = sum(m.whey[p, d] for p in m.P for d in m.D)
+        time_slack: Any = 0
+        if hasattr(m, "slack_weekly_time"):
+            time_slack += m.slack_weekly_time
+        if hasattr(m, "slack_session_time"):
+            time_slack += sum(m.slack_session_time[d] for d in m.D)
         return (
             opt.diversity_weight * diversity
             + opt.rating_weight * rating_term
@@ -719,6 +826,7 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
             - opt.group_slack_weight * group_slack
             - opt.spacing_weight * spacing_term
             - settings.topup.whey_solver_penalty * whey_term
+            - settings.optimizer.time_budget.slack_weight * time_slack
         )
 
     model.objective = Objective(rule=objective_rule, sense=maximize)

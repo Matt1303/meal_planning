@@ -100,7 +100,8 @@ class ModelInputs:
 def load_inputs(engine: Engine, *, include_non_plant: bool) -> ModelInputs:
     extra_filter = "" if include_non_plant else " WHERE is_plant_based = TRUE"
     recipes = pd.read_sql(
-        f"SELECT recipe_id, title, rating, categories FROM meal_planning.recipe{extra_filter}",
+        f"SELECT recipe_id, title, rating, categories, prep_minutes, cook_minutes"
+        f" FROM meal_planning.recipe{extra_filter}",
         engine,
     )
     meal_types = pd.read_sql(
@@ -191,6 +192,13 @@ class PreparedData:
     category_recipe_ids: dict[str, set[int]] = field(default_factory=dict)
     # category-substring -> max snacks of that category per day.
     snack_category_limits: dict[str, int] = field(default_factory=dict)
+    # Kitchen minutes to cook one batch of each recipe (prep + cook, scaled by
+    # the user's multiplier; ready meals at their flat minutes). Absent means
+    # no data — counts as zero until the recipe is timed in Paprika.
+    cook_minutes: dict[int, float] = field(default_factory=dict)
+    # Recipes in the ready-meal category: exempt from leftover pairing and
+    # served as one full portion each rather than the household split.
+    ready_meal_ids: set[int] = field(default_factory=set)
 
 
 def prepare(inputs: ModelInputs, settings: Settings) -> PreparedData:
@@ -360,6 +368,27 @@ def prepare(inputs: ModelInputs, settings: Settings) -> PreparedData:
             fixed_recipe_ids.add(fixed_rid)
             allowed_meal[(fixed_rid, meal_type)] = 1
 
+    tb = settings.optimizer.time_budget
+    ready_term = settings.optimizer.ready_meal_category.strip().lower()
+    cook_minutes: dict[int, float] = {}
+    ready_meal_ids: set[int] = set()
+    for row in inputs.recipes.itertuples():
+        rid = int(row.recipe_id)
+        if rid not in set(recipes_list):
+            continue
+        cats = str(getattr(row, "categories", "") or "").lower()
+        if ready_term and ready_term in cats:
+            ready_meal_ids.add(rid)
+            cook_minutes[rid] = float(tb.ready_meal_minutes)
+            continue
+        prep = getattr(row, "prep_minutes", None)
+        cook = getattr(row, "cook_minutes", None)
+        total = (0 if prep is None or pd.isna(prep) else float(prep)) + (
+            0 if cook is None or pd.isna(cook) else float(cook)
+        )
+        if total > 0:
+            cook_minutes[rid] = total * tb.time_multiplier
+
     return PreparedData(
         recipes=recipes_list,
         days=days,
@@ -384,4 +413,6 @@ def prepare(inputs: ModelInputs, settings: Settings) -> PreparedData:
         snack_meal_types=snack_meal_types,
         category_recipe_ids=category_recipe_ids,
         snack_category_limits=dict(settings.optimizer.snack_category_limits),
+        cook_minutes=cook_minutes,
+        ready_meal_ids=ready_meal_ids,
     )
