@@ -234,6 +234,52 @@ def fetch_recipe_serving_grams(conn: Connection) -> dict[int, Decimal]:
     return {int(r[0]): Decimal(str(r[1])) for r in rows if r[1] is not None}
 
 
+def mark_match_verified(conn: Connection, ingredient_canonical: str, score: float) -> None:
+    """Record that the LLM confirmed a low-confidence match.
+
+    Without this an accepted suspect stayed below the verify threshold and was
+    re-verified — at LLM cost — on every single enrich run.
+    """
+    conn.execute(
+        text(
+            """
+            UPDATE meal_planning.ingredient_nutrition_cache
+            SET match_score = :score
+            WHERE ingredient_canonical = :c
+            """
+        ),
+        {"c": ingredient_canonical, "score": Decimal(str(score))},
+    )
+
+
+def tombstone_rejected_match(conn: Connection, ingredient_canonical: str) -> None:
+    """Record that no acceptable nutrition match exists for this canonical.
+
+    Deleting a rejected match sent the next enrich straight back to the same
+    sources, which returned the same bad match, which the LLM rejected again —
+    a lookup-and-reject loop paid for on every refresh. A tombstone (NULL
+    macros, top score) contributes nothing to recipes and asks no further
+    questions. Clear it by deleting the row if the food gets a real entry in
+    nutrition_overrides.csv.
+    """
+    conn.execute(
+        text(
+            """
+            INSERT INTO meal_planning.ingredient_nutrition_cache
+                (ingredient_canonical, source, match_score, match_source_name)
+            VALUES (:c, 'llm_rejected', 100, 'no acceptable match found')
+            ON CONFLICT (ingredient_canonical) DO UPDATE SET
+                kcal_per_100g = NULL, fiber_g_per_100g = NULL,
+                protein_g_per_100g = NULL, fat_g_per_100g = NULL,
+                carbs_g_per_100g = NULL,
+                source = 'llm_rejected', match_score = 100,
+                match_source_name = 'no acceptable match found'
+            """
+        ),
+        {"c": ingredient_canonical},
+    )
+
+
 def delete_cache(conn: Connection, ingredient_canonical: str) -> None:
     conn.execute(
         text(

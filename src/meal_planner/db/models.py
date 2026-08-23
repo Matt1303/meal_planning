@@ -32,6 +32,8 @@ class Recipe(Base):
     rating: Mapped[Decimal | None] = mapped_column(Numeric)
     servings: Mapped[str | None] = mapped_column(Text)
     servings_count: Mapped[Decimal | None] = mapped_column(Numeric)
+    prep_minutes: Mapped[int | None] = mapped_column(Integer)
+    cook_minutes: Mapped[int | None] = mapped_column(Integer)
     difficulty: Mapped[str | None] = mapped_column(Text)
     categories: Mapped[str | None] = mapped_column(Text)
     source: Mapped[str | None] = mapped_column(Text)
@@ -94,6 +96,7 @@ class RecipeIngredient(Base):
     food_group: Mapped[str | None] = mapped_column(Text)
     portions: Mapped[Decimal | None] = mapped_column(Numeric)
     portion_met: Mapped[bool | None] = mapped_column(Boolean)
+    parsed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     portion_estimated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     sub_recipe_id: Mapped[int | None] = mapped_column(
         Integer,

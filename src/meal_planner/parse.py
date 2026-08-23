@@ -89,6 +89,16 @@ def _seed_ingredient_overrides(conn: Connection, path: Path) -> int:
             text("DELETE FROM meal_planning.ingredient_parse_cache WHERE lower(raw_text) = :rt"),
             {"rt": raw.lower()},
         )
+        # Queue the affected rows so the override actually takes effect this
+        # run — previously it silently did nothing until someone cleared the
+        # row columns by hand.
+        conn.execute(
+            text(
+                "UPDATE meal_planning.recipe_ingredient SET parsed_at = NULL "
+                "WHERE lower(raw_text) = :rt"
+            ),
+            {"rt": raw.lower()},
+        )
         seeded += 1
     return seeded
 

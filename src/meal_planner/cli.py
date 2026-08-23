@@ -95,11 +95,23 @@ def ingest(config: Path = typer.Option(Path("config/pipeline.yaml"), "--config")
 
 
 @app.command("parse")
-def parse_cmd(config: Path = typer.Option(Path("config/pipeline.yaml"), "--config")) -> None:
+def parse_cmd(
+    config: Path = typer.Option(Path("config/pipeline.yaml"), "--config"),
+    retry_unresolved: bool = typer.Option(
+        False,
+        "--retry-unresolved",
+        help="Re-attempt lines that never resolved to a canonical (uses the LLM)",
+    ),
+) -> None:
+    from meal_planner.db.parse_repo import reset_unresolved_rows
     from meal_planner.parse import parse_ingredients
     from meal_planner.review import unreviewed_recipes
 
     settings = Settings.load(config)
+    if retry_unresolved:
+        with get_engine().begin() as conn:
+            queued = reset_unresolved_rows(conn)
+        typer.echo(f"queued {queued} unresolved line(s) for another attempt")
     total = parse_ingredients(settings)
     typer.echo(f"parsed={total}")
 

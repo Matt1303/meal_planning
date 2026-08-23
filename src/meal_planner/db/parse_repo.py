@@ -49,20 +49,39 @@ def fetch_overrides(conn: Connection) -> dict[str, tuple[str | None, str | None]
 
 
 def fetch_unparsed_rows(conn: Connection) -> list[tuple[int, str, Decimal | None]]:
+    """Rows that have never been through parse (or were explicitly reset).
+
+    Inferring "unparsed" from NULL columns re-parsed 930 rows every run —
+    a NULL food group is the settled answer for most lines (olive oil is not
+    a Daily Dozen food), and headers are all-NULL by design. parsed_at says
+    what actually happened; clearing it is how a re-parse is requested.
+    """
     rows = conn.execute(
         text(
             """
             SELECT ri.recipe_id, ri.raw_text, r.servings_count
             FROM meal_planning.recipe_ingredient ri
             JOIN meal_planning.recipe r ON r.recipe_id = ri.recipe_id
-            WHERE ri.ingredient_canonical IS NULL
-               OR ri.quantity_grams IS NULL
-               OR ri.per_serving_grams IS NULL
-               OR ri.food_group IS NULL
+            WHERE ri.parsed_at IS NULL
             """
         )
     ).fetchall()
     return [(int(r[0]), str(r[1]), r[2]) for r in rows]
+
+
+def reset_unresolved_rows(conn: Connection) -> int:
+    """Queue lines that never resolved to a canonical for another attempt."""
+    return int(
+        conn.execute(
+            text(
+                """
+                UPDATE meal_planning.recipe_ingredient
+                SET parsed_at = NULL
+                WHERE ingredient_canonical IS NULL AND parsed_at IS NOT NULL
+                """
+            )
+        ).rowcount
+    )
 
 
 def fetch_cache(conn: Connection, raw_text: str) -> CachedParse | None:
@@ -94,7 +113,8 @@ def write_parse_update(conn: Connection, update: ParseUpdate) -> None:
         text(
             """
             UPDATE meal_planning.recipe_ingredient
-            SET ingredient_name = :ingredient_name,
+            SET parsed_at = now(),
+                ingredient_name = :ingredient_name,
                 ingredient_canonical = :ingredient_canonical,
                 quantity_value = :quantity_value,
                 quantity_unit = :quantity_unit,

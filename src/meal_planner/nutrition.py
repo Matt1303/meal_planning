@@ -24,6 +24,8 @@ from meal_planner.db.nutrition_repo import (
     fetch_recipe_serving_grams,
     fetch_sample_raw_text,
     fetch_sub_recipe_lines,
+    mark_match_verified,
+    tombstone_rejected_match,
     upsert_cache,
     upsert_recipe_nutrition,
 )
@@ -820,8 +822,13 @@ def _verify_and_correct_committed(
         with eng.begin() as conn:
             for verdict in verdicts:
                 canonical = verdict.ingredient_canonical
-                if verdict.decision == "reject":
-                    delete_cache(conn, canonical)
+                if verdict.decision == "approve":
+                    # Persist the confirmation, or this canonical is a suspect
+                    # again next run and the same LLM question gets re-asked
+                    # on every refresh forever.
+                    mark_match_verified(conn, canonical, threshold)
+                elif verdict.decision == "reject":
+                    tombstone_rejected_match(conn, canonical)
                     rejected += 1
                 elif verdict.decision == "alternative":
                     new_result = replacements.get(canonical)
@@ -842,8 +849,9 @@ def _verify_and_correct_committed(
                         re_looked_up += 1
                     else:
                         # LLM said the match is wrong and no clean replacement
-                        # was found — drop the bad match.
-                        delete_cache(conn, canonical)
+                        # was found — remember that, or the same lookup and
+                        # rejection repeat on every refresh.
+                        tombstone_rejected_match(conn, canonical)
                         rejected += 1
     log.info(
         "nutrition.llm_verify_complete",
