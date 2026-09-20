@@ -126,6 +126,10 @@ optimizer:
   fiber_weekly_min: null
   weekly_group_portions_min: {}
   include_non_plant: false
+  # Ellie's keto breakfast is whipped double cream, which is dairy. Admitted
+  # by name rather than opening the whole non-plant catalogue.
+  allow_non_plant_titles:
+    - "Ellie Keto Chocolate Cream"
   # Canonicals whose grams are a cooked weight, and the cooked:raw ratio used to
   # buy the right amount. Rice and pasta lines resolve to these via
   # ingredient_overrides.csv and are valued at cooked calories.
@@ -161,7 +165,8 @@ household:
       protein_daily_min: 75
       fiber_daily_min: 25
       fixed_meals:
-        breakfast: "Simple Overnight Oats"
+        # Keto block: the oats were 58 g of carbs, more than a whole keto day.
+        breakfast: "Ellie Keto Chocolate Cream"
       # 0.75 to Matt's 1.25 — a smaller plate of the same dish. Without this
       # she inherits portions sized for a 3300 kcal day.
       shared_portion_min: 0.75

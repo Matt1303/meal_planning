@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from math import exp
@@ -110,8 +111,19 @@ class ModelInputs:
     swap_lines: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
-def load_inputs(engine: Engine, *, include_non_plant: bool) -> ModelInputs:
-    extra_filter = "" if include_non_plant else " WHERE is_plant_based = TRUE"
+def load_inputs(
+    engine: Engine,
+    *,
+    include_non_plant: bool,
+    allow_non_plant_titles: Sequence[str] = (),
+) -> ModelInputs:
+    if include_non_plant:
+        extra_filter = ""
+    elif allow_non_plant_titles:
+        allowed = ", ".join("'" + t.replace("'", "''") + "'" for t in allow_non_plant_titles)
+        extra_filter = f" WHERE (is_plant_based = TRUE OR title IN ({allowed}))"
+    else:
+        extra_filter = " WHERE is_plant_based = TRUE"
     recipes = pd.read_sql(
         f"SELECT recipe_id, title, rating, categories, prep_minutes, cook_minutes"
         f" FROM meal_planning.recipe{extra_filter}",

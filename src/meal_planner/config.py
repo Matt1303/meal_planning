@@ -160,6 +160,11 @@ class OptimizerSettings(BaseModel):
     protein_weekly_min: int | None = None
     weekly_group_portions_min: dict[str, float] = Field(default_factory=dict)
     include_non_plant: bool = False
+    # Specific non-plant recipes the plant-only filter should still admit,
+    # by exact title. A plant-based household can still want one dish that
+    # isn't — Ellie's keto breakfast is whipped double cream. Narrower than
+    # include_non_plant, which would admit every chicken and lamb recipe.
+    allow_non_plant_titles: list[str] = Field(default_factory=list)
     # Recipe ids the user pinned to appear at least once in the week.
     must_include_recipe_ids: list[int] = Field(default_factory=list)
     spacing_penalty_by_gap: dict[int, float] = Field(

@@ -126,7 +126,11 @@ SHARED_KEY = "__shared__"
 def optimize_plan(settings: Settings, *, engine: Engine | None = None) -> OptimizeResult:
     eng = engine or get_engine()
     correlation_id = current_correlation_id()
-    inputs = load_inputs(eng, include_non_plant=settings.optimizer.include_non_plant)
+    inputs = load_inputs(
+        eng,
+        include_non_plant=settings.optimizer.include_non_plant,
+        allow_non_plant_titles=settings.optimizer.allow_non_plant_titles,
+    )
     if inputs.recipes.empty:
         raise RuntimeError("no recipes found")
     filtered = filter_recipes(inputs, min_rating=settings.optimizer.min_rating, settings=settings)

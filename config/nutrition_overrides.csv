@@ -18,3 +18,5 @@ garlic,149,6.4,2.1,0.5,33.1,Verified correct — raw garlic really is this dense
 cooked pasta,131,5.0,1.8,0.9,25.0,Boiled pasta — the 200 g default portion is a cooked weight
 whole wheat pasta,348,13.4,10.7,2.5,66.0,"Dry wholewheat pasta — LLM kept rejecting source matches, so lines priced at 0"
 bread,265,9.0,2.7,3.2,49.0,"Generic bread/crusty loaf — same reject loop, was contributing 0 kcal"
+granulated sweetener,0,0,0,0,0,Erythritol/stevia blend — no usable calories
+cocoa powder,350,20.0,33.0,22.0,58.0,Unsweetened cocoa: most of the carbohydrate is fibre
