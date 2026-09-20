@@ -125,11 +125,12 @@ optimizer:
   calories_weekly_max: null
   fiber_weekly_min: null
   weekly_group_portions_min: {}
-  include_non_plant: false
-  # Ellie's keto breakfast is whipped double cream, which is dairy. Admitted
-  # by name rather than opening the whole non-plant catalogue.
-  allow_non_plant_titles:
-    - "Ellie Keto Chocolate Cream"
+  # Non-plant recipes are in play: keto on a plant-only catalogue had almost
+  # nothing to build fat from, and opening it takes Ellie's eligible
+  # lunch/dinner dishes from 3 to 9 at a 10 g carb cap. This applies to the
+  # whole household, so Matt's plan can now pick meat and fish too.
+  include_non_plant: true
+  allow_non_plant_titles: []
   # Canonicals whose grams are a cooked weight, and the cooked:raw ratio used to
   # buy the right amount. Rice and pasta lines resolve to these via
   # ingredient_overrides.csv and are valued at cooked calories.
@@ -187,14 +188,17 @@ household:
       # Net-carb style cap: the plan counts total carbs, so 50 g total leaves
       # room for the fibre a plant-based day carries. Fat has a floor rather
       # than a ceiling: it is what replaces the carb calories.
-      carbs_daily_max: 50
+      carbs_daily_max: 20
       fat_daily_min: 90
       diet:
         name: keto
         # Dish eligibility is a carb filter only. Filtering on fat as well
         # leaves too few dishes to fill an 8-day paired plan — fat is met at
         # the day level by oils, avocado and her shakes.
-        max_carbs_per_serving: 20
+        # 10 g leaves 9 lunch/dinner dishes eligible, and an 8-day paired plan
+        # needs 8 distinct ones. Tighter (8 g) drops to 7 and the week cannot
+        # be filled; looser lets a single dish eat the whole 20 g day.
+        max_carbs_per_serving: 10
         swaps_enabled: true
         allow_solo_meals: true
       # Clear whey rather than the household default — she prefers it, and it
