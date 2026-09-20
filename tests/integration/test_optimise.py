@@ -58,6 +58,11 @@ def settings_with_fixtures() -> Settings:
                     # any assertion ran. Pin the horizon here rather than
                     # tracking whatever the shipped config happens to say.
                     "planning_horizon_days": FIXTURE_DAYS,
+                    # Pinned, not inherited: these tests are about the
+                    # optimiser, not the household's diet. When the shipped
+                    # config opened up non-plant recipes the fixture's chicken
+                    # dish entered the pool and the spacing comparison flipped.
+                    "include_non_plant": False,
                 }
             ),
         }
