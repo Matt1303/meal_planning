@@ -145,10 +145,16 @@ def write_plan(settings: Settings, result: OptimizeResult, *, engine: Engine | N
 
             # (recipe_id, servings) per profile — a shared dish is a part serving
             # for someone on a smaller calorie target, so macros scale with it.
-            per_profile_recipes: dict[str, list[tuple[int, float]]] = {
-                p: [(r, result.portions.get((p, day, mt), 1.0)) for mt, r in shared_today]
-                for p in profile_names
-            }
+            # Someone on a regime may have opted out and cooked their own, in
+            # which case their own dish sits under their name in the same slot.
+            per_profile_recipes: dict[str, list[tuple[int, float]]] = {}
+            for p in profile_names:
+                eaten: list[tuple[int, float]] = []
+                for mt, shared_recipe in shared_today:
+                    own = slot_to_cell.get(mt, {}).get(p)
+                    recipe_id = own if own is not None else shared_recipe
+                    eaten.append((recipe_id, result.portions.get((p, day, mt), 1.0)))
+                per_profile_recipes[p] = eaten
             for mt in prepared.per_user_meal_types:
                 cell = slot_to_cell.get(mt, {})
                 for owner, recipe_id in cell.items():
@@ -162,9 +168,12 @@ def write_plan(settings: Settings, result: OptimizeResult, *, engine: Engine | N
                 totals = [Decimal(0)] * 5
                 for r, servings in per_profile_recipes[profile_name]:
                     macros = _macros(nutrition, r)
+                    # A dieter's swaps change what the dish is worth to them.
+                    delta = result.prepared.diet_deltas.get((r, profile_name))
                     factor = Decimal(str(servings))
                     for i, v in enumerate(macros):
-                        totals[i] += v * factor
+                        adjusted = v if delta is None else v + Decimal(str(delta[i]))
+                        totals[i] += adjusted * factor
                 for mt, _ in shared_today:
                     insert_plan_meal_portion(
                         conn,

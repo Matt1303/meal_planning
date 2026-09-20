@@ -156,6 +156,118 @@ def review_cmd(
         typer.echo(f"recorded {len(state)} recipe(s) as reviewed")
 
 
+@app.command("diet-swaps")
+def diet_swaps_cmd(
+    config: Path = typer.Option(Path("config/pipeline.yaml"), "--config"),
+    min_carbs: float = typer.Option(
+        8.0, "--min-carbs", help="Only ask about ingredients above this many carbs a serving"
+    ),
+    write: bool = typer.Option(False, "--write", help="Save suggestions to the swaps file"),
+) -> None:
+    """Ask Claude for low-carb stand-ins for the catalogue's high-carb ingredients.
+
+    Suggestions are written to a reviewable CSV rather than applied blind —
+    the same shape as the other durable config tables. Existing rows win, so
+    an edited swap is never overwritten by a later run.
+    """
+    from sqlalchemy import text as sql_text
+
+    from meal_planner.diet import IngredientSwap, load_swaps, save_swaps
+    from meal_planner.llm import get_llm_client
+    from meal_planner.llm.base import KetoSwapSuggestion
+
+    settings = Settings.load(config)
+    existing = load_swaps(settings.diet_swaps_path)
+    with get_engine().connect() as conn:
+        rows = conn.execute(
+            sql_text(
+                """
+                SELECT ri.ingredient_canonical,
+                       avg(ri.per_serving_grams * c.carbs_g_per_100g / 100) AS carbs
+                FROM meal_planning.recipe_ingredient ri
+                JOIN meal_planning.recipe r USING (recipe_id)
+                JOIN meal_planning.ingredient_nutrition_cache c
+                  ON c.ingredient_canonical = ri.ingredient_canonical
+                WHERE r.is_plant_based AND ri.per_serving_grams IS NOT NULL
+                  AND c.carbs_g_per_100g IS NOT NULL
+                GROUP BY 1 HAVING avg(ri.per_serving_grams * c.carbs_g_per_100g / 100) >= :m
+                ORDER BY 2 DESC
+                """
+            ),
+            {"m": min_carbs},
+        ).fetchall()
+
+    wanted = [str(r[0]) for r in rows if str(r[0]).lower() not in existing]
+    if not wanted:
+        typer.echo(f"nothing new above {min_carbs:g} g carbs a serving")
+        return
+    llm = get_llm_client(settings.llm)
+    # Batched: the replies carry a sentence of cooking advice each, so asking
+    # about the whole catalogue at once overran the token budget and returned
+    # truncated JSON, which parsed as nothing at all.
+    suggestions: list[KetoSwapSuggestion] = []
+    batch_size = 12
+    for start in range(0, len(wanted), batch_size):
+        suggestions.extend(llm.suggest_keto_swaps(wanted[start : start + batch_size]))
+    if not suggestions:
+        typer.echo(
+            f"asked about {len(wanted)} ingredient(s), got no suggestions "
+            "(is the Anthropic API key set?)"
+        )
+        return
+    # Trust but verify: the model proposed yacon syrup for maple syrup at the
+    # same carb load, and aubergine for aubergine. A swap has to actually cut
+    # carbs by a clear margin, or it is churn at best and harmful at worst.
+    with get_engine().connect() as conn:
+        current = {
+            str(c): float(v)
+            for c, v in conn.execute(
+                sql_text(
+                    "SELECT ingredient_canonical, carbs_g_per_100g "
+                    "FROM meal_planning.ingredient_nutrition_cache "
+                    "WHERE carbs_g_per_100g IS NOT NULL"
+                )
+            ).fetchall()
+        }
+    kept = []
+    for suggestion in suggestions:
+        was = current.get(suggestion.from_canonical.lower())
+        same_food = suggestion.to_name.strip().lower() == suggestion.from_canonical.strip().lower()
+        if same_food or (was is not None and suggestion.carbs_g_per_100g > was * 0.7):
+            typer.echo(
+                f"  rejected {suggestion.from_canonical:24s} -> {suggestion.to_name[:34]:36s}"
+                f"{suggestion.carbs_g_per_100g:5.1f} vs {was if was is not None else float('nan'):5.1f}"
+            )
+            continue
+        kept.append(suggestion)
+    suggestions = kept
+    for suggestion in suggestions:
+        typer.echo(
+            f"  {suggestion.from_canonical:28s} -> {suggestion.to_name:26s} "
+            f"{suggestion.carbs_g_per_100g:5.1f} g carbs/100g"
+        )
+    skipped = len(wanted) - len(suggestions)
+    if skipped:
+        typer.echo(f"  ({skipped} left alone — no sensible low-carb substitute)")
+    if not write:
+        typer.echo("\nrerun with --write to save these to " + str(settings.diet_swaps_path))
+        return
+    for suggestion in suggestions:
+        existing[suggestion.from_canonical.lower()] = IngredientSwap(
+            from_canonical=suggestion.from_canonical.lower(),
+            to_name=suggestion.to_name,
+            kcal_per_100g=suggestion.kcal_per_100g,
+            protein_g_per_100g=suggestion.protein_g_per_100g,
+            fat_g_per_100g=suggestion.fat_g_per_100g,
+            carbs_g_per_100g=suggestion.carbs_g_per_100g,
+            fiber_g_per_100g=suggestion.fiber_g_per_100g,
+            gram_ratio=suggestion.gram_ratio,
+            note=suggestion.note,
+        )
+    save_swaps(settings.diet_swaps_path, existing)
+    typer.echo(f"wrote {len(existing)} swap(s) to {settings.diet_swaps_path}")
+
+
 @app.command("optimise")
 def optimise(
     config: Path = typer.Option(Path("config/pipeline.yaml"), "--config"),

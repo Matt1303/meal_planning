@@ -9,6 +9,7 @@ import pandas as pd
 from sqlalchemy import Engine
 
 from meal_planner.config import ProfileTargets, Settings
+from meal_planner.diet import DietAdjustments
 from meal_planner.logging import get_logger
 
 log = get_logger(__name__)
@@ -23,6 +24,10 @@ class ProfileSpec:
     fiber_daily_min: int | None
     protein_daily_min: int | None
     protein_daily_max: int | None
+    carbs_daily_min: int | None = None
+    carbs_daily_max: int | None = None
+    fat_daily_min: int | None = None
+    fat_daily_max: int | None = None
     fixed_meals: dict[str, str] = field(default_factory=dict)
     shared_portion_min: float = 1.0
     shared_portion_max: float = 1.0
@@ -41,6 +46,10 @@ class ProfileSpec:
             fiber_daily_min=profile.fiber_daily_min,
             shared_portion_min=profile.shared_portion_min,
             shared_portion_max=profile.shared_portion_max,
+            carbs_daily_min=profile.carbs_daily_min,
+            carbs_daily_max=profile.carbs_daily_max,
+            fat_daily_min=profile.fat_daily_min,
+            fat_daily_max=profile.fat_daily_max,
             protein_daily_min=profile.protein_daily_min,
             protein_daily_max=profile.protein_daily_max,
             fixed_meals=dict(profile.fixed_meals),
@@ -95,6 +104,10 @@ class ModelInputs:
     ingredients: pd.DataFrame
     nutrition: pd.DataFrame
     history: pd.DataFrame
+    # Every priced ingredient line with its per-100g macros — the Daily Dozen
+    # frame above drops lines with no food group, which is most starches.
+    # Only used to compute dietary swaps.
+    swap_lines: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 def load_inputs(engine: Engine, *, include_non_plant: bool) -> ModelInputs:
@@ -118,7 +131,8 @@ def load_inputs(engine: Engine, *, include_non_plant: bool) -> ModelInputs:
     )
     nutrition = pd.read_sql(
         """
-        SELECT recipe_id, per_serving_kcal, per_serving_fiber_g, per_serving_protein_g
+        SELECT recipe_id, per_serving_kcal, per_serving_fiber_g, per_serving_protein_g,
+               per_serving_fat_g, per_serving_carbs_g
         FROM meal_planning.recipe_nutrition
         """,
         engine,
@@ -127,7 +141,19 @@ def load_inputs(engine: Engine, *, include_non_plant: bool) -> ModelInputs:
         "SELECT recipe_id, max(planned_for) AS last_planned FROM meal_planning.meal_history GROUP BY recipe_id",
         engine,
     )
-    return ModelInputs(recipes, meal_types, ingredients, nutrition, history)
+    swap_lines = pd.read_sql(
+        """
+        SELECT ri.recipe_id, ri.ingredient_canonical, ri.per_serving_grams,
+               c.kcal_per_100g, c.fiber_g_per_100g, c.protein_g_per_100g,
+               c.fat_g_per_100g, c.carbs_g_per_100g
+        FROM meal_planning.recipe_ingredient ri
+        JOIN meal_planning.ingredient_nutrition_cache c
+          ON c.ingredient_canonical = ri.ingredient_canonical
+        WHERE ri.per_serving_grams IS NOT NULL
+        """,
+        engine,
+    )
+    return ModelInputs(recipes, meal_types, ingredients, nutrition, history, swap_lines)
 
 
 # (recipe_id, profile_name) -> (kcal, fiber_g, protein_g, fat_g, carbs_g) adjustment.
@@ -151,6 +177,7 @@ def filter_recipes(inputs: ModelInputs, *, min_rating: float, settings: Settings
         ingredients=inputs.ingredients,
         nutrition=inputs.nutrition,
         history=inputs.history,
+        swap_lines=inputs.swap_lines,
     )
 
 
@@ -195,13 +222,29 @@ class PreparedData:
     # Kitchen minutes to cook one batch of each recipe (prep + cook, scaled by
     # the user's multiplier; ready meals at their flat minutes). Absent means
     # no data — counts as zero until the recipe is timed in Paprika.
+    fat: dict[int, float] = field(default_factory=dict)
+    carbs: dict[int, float] = field(default_factory=dict)
+    # (recipe_id, profile_name) -> macro delta from that person's dietary swaps
+    # (kcal, fiber, protein, fat, carbs). Absent means they eat it as written.
+    diet_deltas: dict[tuple[int, str], tuple[float, float, float, float, float]] = field(
+        default_factory=dict
+    )
+    # profile_name -> recipes that person may be served. A profile absent from
+    # this map is on no regime and may be served anything.
+    diet_eligible: dict[str, set[int]] = field(default_factory=dict)
+    # Profiles allowed a different dish when no shared one suits them.
+    solo_profiles: set[str] = field(default_factory=set)
     cook_minutes: dict[int, float] = field(default_factory=dict)
     # Recipes in the ready-meal category: exempt from leftover pairing and
     # served as one full portion each rather than the household split.
     ready_meal_ids: set[int] = field(default_factory=set)
 
 
-def prepare(inputs: ModelInputs, settings: Settings) -> PreparedData:
+def prepare(
+    inputs: ModelInputs,
+    settings: Settings,
+    diet: DietAdjustments | None = None,
+) -> PreparedData:
     targets = settings.daily_dozen_targets
     recipes_list = [int(r) for r in inputs.recipes["recipe_id"].tolist()]
     days = list(range(1, settings.optimizer.planning_horizon_days + 1))
@@ -212,33 +255,23 @@ def prepare(inputs: ModelInputs, settings: Settings) -> PreparedData:
         sub = inputs.recipes.loc[inputs.recipes["recipe_id"] == r, "rating"].iloc[0]
         rating[r] = float(sub) if sub is not None and not pd.isna(sub) else 0.0
 
-    if not inputs.nutrition.empty:
+    def _per_serving(column: str) -> dict[int, float]:
+        """Recipe -> per-serving value, defaulting to zero when unknown."""
+        if inputs.nutrition.empty or column not in inputs.nutrition.columns:
+            return dict.fromkeys(recipes_list, 0.0)
         nut = inputs.nutrition.set_index("recipe_id")
-        kcal = {
-            r: float(nut.loc[r, "per_serving_kcal"])
-            if r in nut.index and not pd.isna(nut.loc[r, "per_serving_kcal"])
+        return {
+            r: float(nut.loc[r, column])
+            if r in nut.index and not pd.isna(nut.loc[r, column])
             else 0.0
             for r in recipes_list
         }
-        fiber = {
-            r: float(nut.loc[r, "per_serving_fiber_g"])
-            if r in nut.index and not pd.isna(nut.loc[r, "per_serving_fiber_g"])
-            else 0.0
-            for r in recipes_list
-        }
-        if "per_serving_protein_g" in nut.columns:
-            protein = {
-                r: float(nut.loc[r, "per_serving_protein_g"])
-                if r in nut.index and not pd.isna(nut.loc[r, "per_serving_protein_g"])
-                else 0.0
-                for r in recipes_list
-            }
-        else:
-            protein = dict.fromkeys(recipes_list, 0.0)
-    else:
-        kcal = dict.fromkeys(recipes_list, 0.0)
-        fiber = dict.fromkeys(recipes_list, 0.0)
-        protein = dict.fromkeys(recipes_list, 0.0)
+
+    kcal = _per_serving("per_serving_kcal")
+    fiber = _per_serving("per_serving_fiber_g")
+    protein = _per_serving("per_serving_protein_g")
+    fat = _per_serving("per_serving_fat_g")
+    carbs = _per_serving("per_serving_carbs_g")
 
     history_map: dict[int, date | datetime | None] = {}
     for _, row in inputs.history.iterrows():
@@ -364,6 +397,19 @@ def prepare(inputs: ModelInputs, settings: Settings) -> PreparedData:
                     title=title,
                 )
                 continue
+            allowed_for_diet = diet.eligible.get(profile.name) if diet is not None else None
+            if allowed_for_diet is not None and fixed_rid not in allowed_for_diet:
+                # The regime wins over the pin: serving a fixed breakfast that
+                # breaks the diet every single day defeats the point of the
+                # diet. Said loudly, because the pin is what the user asked for.
+                log.warning(
+                    "optimize.fixed_meal_breaks_diet",
+                    profile=profile.name,
+                    meal_type=meal_type,
+                    title=title,
+                    hint="pin dropped for the regime; set a compliant fixed meal",
+                )
+                continue
             fixed_assignments[(profile.name, meal_type)] = fixed_rid
             fixed_recipe_ids.add(fixed_rid)
             allowed_meal[(fixed_rid, meal_type)] = 1
@@ -413,6 +459,17 @@ def prepare(inputs: ModelInputs, settings: Settings) -> PreparedData:
         snack_meal_types=snack_meal_types,
         category_recipe_ids=category_recipe_ids,
         snack_category_limits=dict(settings.optimizer.snack_category_limits),
+        fat=fat,
+        carbs=carbs,
+        diet_deltas=dict(diet.deltas) if diet is not None else {},
+        diet_eligible={k: set(v) for k, v in diet.eligible.items()} if diet is not None else {},
+        solo_profiles={
+            p.name
+            for p in settings.household.profiles
+            if p.diet is not None and p.diet.allow_solo_meals
+        }
+        if diet is not None and diet.active
+        else set(),
         cook_minutes=cook_minutes,
         ready_meal_ids=ready_meal_ids,
     )

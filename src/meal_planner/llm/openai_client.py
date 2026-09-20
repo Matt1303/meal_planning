@@ -7,6 +7,7 @@ from typing import Any, cast
 from pydantic import TypeAdapter, ValidationError
 
 from meal_planner.llm.base import (
+    KetoSwapSuggestion,
     LLMResponse,
     LLMUsage,
     NutritionMacros,
@@ -73,6 +74,10 @@ class OpenAILLM:
 
     def fetch_nutrition_macros(self, queries: Sequence[NutritionQuery]) -> list[NutritionMacros]:
         # Direct-macros is implemented in the Anthropic client only for now.
+        return []
+
+    def suggest_keto_swaps(self, canonicals: Sequence[str]) -> list[KetoSwapSuggestion]:
+        # Only the Anthropic client implements this; the keto CLI says so.
         return []
 
     def estimate_portions(self, queries: Sequence[NutritionQuery]) -> list[PortionEstimate]:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import itertools
+import math
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -52,6 +53,55 @@ def _user_recipes_on_day(m: Any, p: ProfileSpec, r: int, d: int, prepared: Prepa
     return shared_sum + user_sum
 
 
+_ZERO_DELTA = (0.0, 0.0, 0.0, 0.0, 0.0)
+# Index into a diet delta tuple.
+KCAL, FIBER, PROTEIN, FAT, CARBS = range(5)
+
+
+def _macro(prepared: PreparedData, base: dict[int, float], r: int, p: str, index: int) -> float:
+    """What recipe r is worth to person p for one macro.
+
+    Two people eating the same curry get different numbers when one of them
+    swaps the rice for cauliflower rice, so macros are per-person here.
+    """
+    delta = prepared.diet_deltas.get((r, p), _ZERO_DELTA)
+    value = base.get(r, 0.0) + delta[index]
+    if math.isnan(value) or math.isinf(value):
+        # HiGHS answers a matrix containing NaN by silently dropping every row,
+        # so the solve "succeeds" against no constraints at all. Refuse instead.
+        raise ValueError(f"non-finite macro for recipe {r} / profile {p} (index {index}): {value}")
+    return value
+
+
+def _shared_servings(m: Any, p: ProfileSpec, r: int, d: int, prepared: PreparedData) -> Any:
+    """Servings of shared dish r person p eats on day d.
+
+    Three shapes: a person who may opt out of the shared dish eats it only when
+    they have not gone solo (share_eff) and otherwise eats their own (x_solo);
+    a flexible-portion person eats whatever the solver gives them (share); and
+    everyone else eats their fixed multiple of it.
+    """
+    meals = prepared.shared_meal_types
+    if p.name in prepared.solo_profiles and hasattr(m, "share_eff"):
+        total: Any = 0
+        for meal in meals:
+            if prepared.allowed_meal[(r, meal)]:
+                total += m.share_eff[p.name, r, d, meal]
+                if (p.name, r, d, meal) in m.SOLO_KEYS:
+                    total += m.x_solo[p.name, r, d, meal]
+        return total
+    if p.portion_is_flexible and meals:
+        return sum(
+            m.share[p.name, r, d, meal] for meal in meals if prepared.allowed_meal[(r, meal)]
+        )
+    # A fixed portion is just a coefficient on the dish binary — no variable
+    # needed, which is why pinning the split solves far faster than letting
+    # the solver choose it. Ready meals are the exception: a pot is a fixed
+    # single serving, so everyone eats exactly one regardless of the split.
+    coefficient = 1.0 if r in prepared.ready_meal_ids else p.shared_portion_min
+    return coefficient * sum(m.x_shared[r, d, meal] for meal in meals)
+
+
 def _user_servings_on_day(m: Any, p: ProfileSpec, r: int, d: int, prepared: PreparedData) -> Any:
     """How many servings of recipe r profile p eats on day d.
 
@@ -60,21 +110,7 @@ def _user_servings_on_day(m: Any, p: ProfileSpec, r: int, d: int, prepared: Prep
     feed people on very different calorie targets. Drives nutrition and Daily
     Dozen credit alike: a smaller plate delivers proportionally less of both.
     """
-    if p.portion_is_flexible and prepared.shared_meal_types:
-        shared_sum = sum(
-            m.share[p.name, r, d, meal]
-            for meal in prepared.shared_meal_types
-            if prepared.allowed_meal[(r, meal)]
-        )
-    else:
-        # A fixed portion is just a coefficient on the dish binary — no variable
-        # needed, which is why pinning the split solves far faster than letting
-        # the solver choose it. Ready meals are the exception: a pot is a fixed
-        # single serving, so everyone eats exactly one regardless of the split.
-        coefficient = 1.0 if r in prepared.ready_meal_ids else p.shared_portion_min
-        shared_sum = coefficient * sum(
-            m.x_shared[r, d, meal] for meal in prepared.shared_meal_types
-        )
+    shared_sum = _shared_servings(m, p, r, d, prepared)
     user_sum = sum(m.x_user[p.name, r, d, meal] for meal in prepared.per_user_meal_types)
     return shared_sum + user_sum
 
@@ -124,6 +160,83 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
             domain=NonNegativeReals,
             bounds=(0, max(p.shared_portion_max for p in flexible_profiles)),
         )
+
+    # --- Dietary regimes (inert unless a profile declares one) ---
+    eligible = prepared.diet_eligible
+    solo_profiles = [p for p in prepared.profiles if p.name in prepared.solo_profiles]
+
+    def _suits(profile_name: str, recipe: int) -> bool:
+        """Whether this person's regime lets them be served this dish."""
+        allowed = eligible.get(profile_name)
+        return allowed is None or recipe in allowed
+
+    solo_keys = [
+        (p.name, r, d, meal)
+        for p in solo_profiles
+        for meal in prepared.shared_meal_types
+        for r in prepared.recipes
+        if prepared.allowed_meal[(r, meal)] and _suits(p.name, r)
+        for d in prepared.days
+    ]
+    if solo_keys:
+        model.SOLO_KEYS = Set(initialize=solo_keys, dimen=4)
+        model.x_solo = Var(model.SOLO_KEYS, domain=Binary)
+        model.SOLO_SLOTS = Set(
+            initialize=[
+                (p.name, d, meal)
+                for p in solo_profiles
+                for d in prepared.days
+                for meal in prepared.shared_meal_types
+            ],
+            dimen=3,
+        )
+        # 1 when this person eats their own dish in that slot instead of the
+        # household's.
+        model.solo = Var(model.SOLO_SLOTS, domain=Binary)
+        # Their servings of the shared dish: the shared choice AND not solo.
+        # Continuous — the three linking constraints below pin it at integrality.
+        share_eff_keys = [
+            (p.name, r, d, meal)
+            for p in solo_profiles
+            for meal in prepared.shared_meal_types
+            for r in prepared.recipes
+            if prepared.allowed_meal[(r, meal)]
+            for d in prepared.days
+        ]
+        model.SHARE_EFF_KEYS = Set(initialize=share_eff_keys, dimen=4)
+        solo_portion = {p.name: (p.shared_portion_min, p.shared_portion_max) for p in solo_profiles}
+        model.share_eff = Var(
+            model.SHARE_EFF_KEYS,
+            domain=NonNegativeReals,
+            bounds=(0, max(hi for _, hi in solo_portion.values())),
+        )
+
+        def solo_slot_rule(m: Any, p: str, d: int, meal: str) -> Any:
+            return (
+                sum(
+                    m.x_solo[p, r, d, meal]
+                    for r in prepared.recipes
+                    if (p, r, d, meal) in m.SOLO_KEYS
+                )
+                == m.solo[p, d, meal]
+            )
+
+        model.solo_slot = Constraint(model.SOLO_SLOTS, rule=solo_slot_rule)
+
+        def share_eff_upper_dish(m: Any, p: str, r: int, d: int, meal: str) -> Any:
+            return m.share_eff[p, r, d, meal] <= solo_portion[p][1] * m.x_shared[r, d, meal]
+
+        def share_eff_upper_solo(m: Any, p: str, r: int, d: int, meal: str) -> Any:
+            return m.share_eff[p, r, d, meal] <= solo_portion[p][1] * (1 - m.solo[p, d, meal])
+
+        def share_eff_lower(m: Any, p: str, r: int, d: int, meal: str) -> Any:
+            return m.share_eff[p, r, d, meal] >= solo_portion[p][0] * (
+                m.x_shared[r, d, meal] - m.solo[p, d, meal]
+            )
+
+        model.share_eff_dish = Constraint(model.SHARE_EFF_KEYS, rule=share_eff_upper_dish)
+        model.share_eff_solo = Constraint(model.SHARE_EFF_KEYS, rule=share_eff_upper_solo)
+        model.share_eff_min = Constraint(model.SHARE_EFF_KEYS, rule=share_eff_lower)
 
     # How much of a Daily Dozen portion of food i profile p gets on day d, capped
     # at one. Continuous rather than binary: a capped fraction needs no
@@ -236,6 +349,22 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
 
         model.shared_allowed = Constraint(model.R, model.D, model.SHARED_M, rule=shared_allowed)
 
+        dieters = [name for name in profile_names if name in eligible]
+        if dieters:
+            model.DIET_P = Set(initialize=dieters)
+
+            def shared_suits_rule(m: Any, p: str, r: int, d: int, meal: str) -> Any:
+                """A dish nobody has opted out of has to suit everyone eating it."""
+                if _suits(p, r):
+                    return Constraint.Skip
+                if hasattr(m, "solo"):
+                    return m.x_shared[r, d, meal] <= m.solo[p, d, meal]
+                return m.x_shared[r, d, meal] <= 0
+
+            model.shared_suits = Constraint(
+                model.DIET_P, model.R, model.D, model.SHARED_M, rule=shared_suits_rule
+            )
+
         if share_keys:
             # Pin share to 0 for dishes not cooked, and into [min, max] for the
             # one that is. Exact because x_shared is binary.
@@ -336,7 +465,12 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
             )
 
         def user_allowed(m: Any, p: str, r: int, d: int, meal: str) -> Any:
-            return m.x_user[p, r, d, meal] <= allowed_meal[(r, meal)]
+            # A pinned meal wins over the regime: the user asked for it by name,
+            # and silently dropping it would be worse than serving it. The diet
+            # report says when a pin breaks the rules.
+            pinned = prepared.fixed_assignments.get((p, meal)) == r
+            permitted = allowed_meal[(r, meal)] and (pinned or _suits(p, r))
+            return m.x_user[p, r, d, meal] <= (1 if permitted else 0)
 
         model.user_allowed = Constraint(model.P, model.R, model.D, model.USER_M, rule=user_allowed)
 
@@ -413,6 +547,25 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
             return sum(m.x_shared[r, d, meal] for d in m.D) == 2 * m.leftover_used[r, meal]
 
         model.leftover_pairing = Constraint(model.LEFTOVER, rule=leftover_rule)
+
+        if solo_keys:
+            solo_pair_keys = sorted({(p, r, meal) for p, r, _, meal in solo_keys})
+            model.SOLO_LEFTOVER = Set(initialize=solo_pair_keys, dimen=3)
+            model.solo_leftover_used = Var(model.SOLO_LEFTOVER, domain=Binary)
+
+            def solo_leftover_rule(m: Any, p: str, r: int, meal: str) -> Any:
+                if r in prepared.ready_meal_ids:
+                    return Constraint.Skip
+                return (
+                    sum(
+                        m.x_solo[p, r, d, meal]
+                        for d in prepared.days
+                        if (p, r, d, meal) in m.SOLO_KEYS
+                    )
+                    == 2 * m.solo_leftover_used[p, r, meal]
+                )
+
+            model.solo_leftover_pairing = Constraint(model.SOLO_LEFTOVER, rule=solo_leftover_rule)
 
     # --- Kitchen-time budget (optional; off until recipes carry time data) ---
     tb = settings.optimizer.time_budget
@@ -600,7 +753,11 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
             # let the solver max out scoops purely to fill the floor, which drove
             # protein far above target. It still counts toward the ceiling below.
             return (
-                sum(kcal[r] * _user_servings_on_day(m, profile, r, d, prepared) for r in m.R)
+                sum(
+                    _macro(prepared, kcal, r, p, KCAL)
+                    * _user_servings_on_day(m, profile, r, d, prepared)
+                    for r in m.R
+                )
                 + _extra(p, d, "kcal")
                 + m.slack_cal_min[p, d]
                 >= profile.calories_daily_min
@@ -614,7 +771,11 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
         def cal_max_rule(m: Any, p: str, d: int) -> Any:
             profile = profiles_by_name[p]
             return (
-                sum(kcal[r] * _user_servings_on_day(m, profile, r, d, prepared) for r in m.R)
+                sum(
+                    _macro(prepared, kcal, r, p, KCAL)
+                    * _user_servings_on_day(m, profile, r, d, prepared)
+                    for r in m.R
+                )
                 + _whey_kcal(m, p, d)
                 + _extra(p, d, "kcal")
                 - m.slack_cal_max[p, d]
@@ -632,7 +793,11 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
         def fiber_min_rule(m: Any, p: str, d: int) -> Any:
             profile = profiles_by_name[p]
             return (
-                sum(fiber[r] * _user_servings_on_day(m, profile, r, d, prepared) for r in m.R)
+                sum(
+                    _macro(prepared, fiber, r, p, FIBER)
+                    * _user_servings_on_day(m, profile, r, d, prepared)
+                    for r in m.R
+                )
                 + _extra(p, d, "fiber_g")
                 + m.slack_fiber_min[p, d]
                 >= profile.fiber_daily_min
@@ -649,7 +814,11 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
         def protein_min_rule(m: Any, p: str, d: int) -> Any:
             profile = profiles_by_name[p]
             return (
-                sum(protein[r] * _user_servings_on_day(m, profile, r, d, prepared) for r in m.R)
+                sum(
+                    _macro(prepared, protein, r, p, PROTEIN)
+                    * _user_servings_on_day(m, profile, r, d, prepared)
+                    for r in m.R
+                )
                 + _whey_protein(m, p, d)
                 + _extra(p, d, "protein_g")
                 + m.slack_protein_min[p, d]
@@ -666,7 +835,11 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
         def protein_max_rule(m: Any, p: str, d: int) -> Any:
             profile = profiles_by_name[p]
             return (
-                sum(protein[r] * _user_servings_on_day(m, profile, r, d, prepared) for r in m.R)
+                sum(
+                    _macro(prepared, protein, r, p, PROTEIN)
+                    * _user_servings_on_day(m, profile, r, d, prepared)
+                    for r in m.R
+                )
                 + _whey_protein(m, p, d)
                 + _extra(p, d, "protein_g")
                 - m.slack_protein_max[p, d]
@@ -679,6 +852,59 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
                 model.D,
                 rule=protein_max_rule,
             )
+
+    # Carb and fat bands. Built only for the profiles that set them, so a
+    # household with no dietary limits gets exactly the model it had before.
+    if options.enforce_daily_protein:
+        for macro_name, base_map, index in (
+            ("carbs", prepared.carbs, CARBS),
+            ("fat", prepared.fat, FAT),
+        ):
+            for bound in ("min", "max"):
+                attr = f"slack_{macro_name}_{bound}"
+                names = [
+                    prof.name
+                    for prof in prepared.profiles
+                    if getattr(prof, f"{macro_name}_daily_{bound}") is not None
+                ]
+                if not names:
+                    continue
+                setattr(
+                    model,
+                    attr,
+                    Var(Set(initialize=names), model.D, domain=NonNegativeReals),
+                )
+
+                def macro_rule(
+                    m: Any,
+                    p: str,
+                    d: int,
+                    _macro_name: str = macro_name,
+                    _base: dict[int, float] = base_map,
+                    _index: int = index,
+                    _bound: str = bound,
+                ) -> Any:
+                    profile = profiles_by_name[p]
+                    eaten = sum(
+                        _macro(prepared, _base, r, p, _index)
+                        * _user_servings_on_day(m, profile, r, d, prepared)
+                        for r in m.R
+                    ) + _extra(p, d, f"{_macro_name}_g")
+                    if _macro_name == "fat":
+                        eaten += m.whey[p, d] * settings.whey_for(p).fat_g if whey_enabled else 0
+                    else:
+                        eaten += m.whey[p, d] * settings.whey_for(p).carbs_g if whey_enabled else 0
+                    slack = getattr(m, f"slack_{_macro_name}_{_bound}")[p, d]
+                    target = getattr(profile, f"{_macro_name}_daily_{_bound}")
+                    if _bound == "min":
+                        return eaten + slack >= target
+                    return eaten - slack <= target
+
+                setattr(
+                    model,
+                    f"{macro_name}_{bound}",
+                    Constraint(Set(initialize=names), model.D, rule=macro_rule),
+                )
 
     if options.enforce_weekly_kcal and opt.calories_weekly_min is not None:
         kcal_w = prepared.kcal
@@ -789,6 +1015,15 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
             "slack_protein_max",
         )
         for attr in per_profile_per_day_slacks:
+            if hasattr(m, attr):
+                var = getattr(m, attr)
+                slack += sum(var[idx] for idx in var)
+        for attr in (
+            "slack_carbs_min",
+            "slack_carbs_max",
+            "slack_fat_min",
+            "slack_fat_max",
+        ):
             if hasattr(m, attr):
                 var = getattr(m, attr)
                 slack += sum(var[idx] for idx in var)

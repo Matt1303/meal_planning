@@ -13,6 +13,7 @@ from meal_planner.config import Settings
 from meal_planner.correlation import current_correlation_id
 from meal_planner.db import get_engine
 from meal_planner.db.metrics_repo import record_metric
+from meal_planner.diet import compute_diet_adjustments, load_swaps
 from meal_planner.logging import get_logger
 from meal_planner.metrics import MetricName
 from meal_planner.optimize.data import (
@@ -131,7 +132,13 @@ def optimize_plan(settings: Settings, *, engine: Engine | None = None) -> Optimi
     filtered = filter_recipes(inputs, min_rating=settings.optimizer.min_rating, settings=settings)
     if filtered.recipes.empty:
         raise RuntimeError("no recipes meet filtering criteria")
-    prepared = prepare(filtered, settings)
+    diet = compute_diet_adjustments(
+        filtered.swap_lines,
+        filtered.nutrition,
+        settings,
+        load_swaps(settings.diet_swaps_path),
+    )
+    prepared = prepare(filtered, settings, diet)
     if not prepared.recipes:
         raise RuntimeError("no recipes left after preparation")
 
@@ -393,13 +400,17 @@ def _extract_portions(
         recipe = plan.get(d, {}).get(meal, {}).get(SHARED_KEY)
         return recipe is not None and recipe in prepared.ready_meal_ids
 
+    def _went_solo(profile_name: str, d: int, meal: str) -> bool:
+        """They cooked their own that slot, so they eat a whole one, not a share."""
+        return plan.get(d, {}).get(meal, {}).get(profile_name) is not None
+
     out: dict[tuple[str, int, str], float] = {}
     for p in prepared.profiles:
         if not p.portion_is_flexible:
             if p.shared_portion_min != 1.0:
                 for d in prepared.days:
                     for meal in prepared.shared_meal_types:
-                        if not _ready_slot(d, meal):
+                        if not _ready_slot(d, meal) and not _went_solo(p.name, d, meal):
                             out[(p.name, d, meal)] = p.shared_portion_min
             continue
         if not hasattr(model, "share"):
@@ -433,6 +444,16 @@ def _extract_plan(model: Any, prepared: PreparedData) -> dict[int, dict[str, Pla
                     break
             else:
                 plan[d][m][SHARED_KEY] = None
+        # A dieter who opted out of the household dish eats their own. The cell
+        # already keys by owner, so their choice sits alongside the shared one
+        # and every downstream reader picks up the right dish per person.
+        if hasattr(model, "x_solo"):
+            for p_name, r, day, meal in model.SOLO_KEYS:
+                if day != d:
+                    continue
+                value = cast(Any, model.x_solo[p_name, r, day, meal]).value
+                if value is not None and value > 0.5:
+                    plan[d][meal][p_name] = r
         for p in prepared.profiles:
             for m in prepared.per_user_meal_types:
                 for r in prepared.recipes:

@@ -639,9 +639,14 @@ def load_plan_view(
         for profile_id, name in profile_id_to_name.items():
             display = profile_id_to_display.get(profile_id, name)
             user_meals = list(meals_by_day_profile.get((day_int, profile_id), []))
+            # Someone on a regime may have cooked their own instead of the
+            # household dish. Their own entry arrives under the same meal type,
+            # so the shared one has to give way or they get served both.
+            own_meal_types = {m.meal_type for m in user_meals}
             shared_for_profile = [
                 _scale_meal(m, servings_by_slot.get((day_int, profile_id, m.meal_type), 1.0))
                 for m in shared
+                if m.meal_type not in own_meal_types
             ]
             combined = [_enrich(m, name) for m in (shared_for_profile + user_meals)]
 

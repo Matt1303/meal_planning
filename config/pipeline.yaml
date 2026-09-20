@@ -178,6 +178,20 @@ household:
           carbs_g: 36.7
           fiber_g: 0
           note: "300 ml oat milk + 15 ml caramel syrup + 9 tsp coffee"
+      # --- 12-week keto block ---
+      # Net-carb style cap: the plan counts total carbs, so 50 g total leaves
+      # room for the fibre a plant-based day carries. Fat has a floor rather
+      # than a ceiling: it is what replaces the carb calories.
+      carbs_daily_max: 50
+      fat_daily_min: 90
+      diet:
+        name: keto
+        # Dish eligibility is a carb filter only. Filtering on fat as well
+        # leaves too few dishes to fill an 8-day paired plan — fat is met at
+        # the day level by oils, avocado and her shakes.
+        max_carbs_per_serving: 20
+        swaps_enabled: true
+        allow_solo_meals: true
       # Clear whey rather than the household default — she prefers it, and it
       # is leaner per scoop (85 vs 95 kcal), so the solver has to cost her
       # scoops at these numbers or her calorie total drifts.

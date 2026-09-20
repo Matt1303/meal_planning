@@ -7,6 +7,7 @@ from typing import Any
 from pydantic import TypeAdapter, ValidationError
 
 from meal_planner.llm.base import (
+    KetoSwapSuggestion,
     LLMResponse,
     LLMUsage,
     NutritionMacros,
@@ -169,6 +170,63 @@ class AnthropicLLM:
         raw = _extract_text(resp.content)
         return _parse_macros(raw, queries)
 
+    def suggest_keto_swaps(self, canonicals: Sequence[str]) -> list[KetoSwapSuggestion]:
+        if not canonicals:
+            return []
+        system_prompt = (
+            "You are a UK nutritionist advising on a ketogenic diet for a "
+            "plant-based household. For each high-carb ingredient, propose the "
+            "best low-carb substitute that keeps the dish recognisable.\n"
+            "Rules:\n"
+            "- Prefer whole-food vegetable substitutes: cauliflower rice for "
+            "rice, courgette (zucchini) spirals or konjac/shirataki noodles for "
+            "pasta and noodles, celeriac or swede batons for potato chips.\n"
+            "- Keep it plant-based: no meat, fish, eggs or dairy.\n"
+            "- Give per-100g macros for the SUBSTITUTE as it is eaten.\n"
+            "- gram_ratio is grams of substitute per gram replaced; use about "
+            "1.0 for volume-for-volume swaps like cauliflower rice.\n"
+            "- If an ingredient has no sensible low-carb substitute (beans and "
+            "lentils are the protein base of a plant-based dish, not a garnish; "
+            "fruit; honey), OMIT it from the array rather than inventing one.\n"
+            "Reply with ONLY a JSON array. Each object: {\n"
+            '  "from_canonical": str (exactly as given),\n'
+            '  "to_name": str,\n'
+            '  "kcal_per_100g": number,\n'
+            '  "protein_g_per_100g": number,\n'
+            '  "fat_g_per_100g": number,\n'
+            '  "carbs_g_per_100g": number,\n'
+            '  "fiber_g_per_100g": number,\n'
+            '  "gram_ratio": number,\n'
+            '  "note": str\n'
+            "}"
+        )
+        user_prompt = "Propose keto substitutes for these recipe ingredients:\n" + json.dumps(
+            list(canonicals), indent=2
+        )
+        resp = self._client.messages.create(
+            model=self._model,
+            max_tokens=4096,
+            temperature=0,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+        raw = _extract_text(resp.content)
+        try:
+            items = json.loads(_strip_code_fence(raw))
+        except (json.JSONDecodeError, ValueError):
+            return []
+        known = {c.lower() for c in canonicals}
+        out: list[KetoSwapSuggestion] = []
+        for item in items if isinstance(items, list) else []:
+            try:
+                suggestion = KetoSwapSuggestion.model_validate(item)
+            except ValidationError:
+                continue
+            # Only accept swaps for ingredients we actually asked about.
+            if suggestion.from_canonical.lower() in known:
+                out.append(suggestion)
+        return out
+
     def estimate_portions(self, queries: Sequence[NutritionQuery]) -> list[PortionEstimate]:
         if not queries:
             return []
@@ -283,12 +341,18 @@ def _extract_usage(resp: object) -> LLMUsage:
 _ADAPTER = TypeAdapter(list[ParsedLine])
 
 
-def _parse_array(text: str, lines: Sequence[str]) -> list[ParsedLine]:
+def _strip_code_fence(text: str) -> str:
+    """Drop a ```json fence the model sometimes wraps its reply in."""
     cleaned = text.strip()
     if cleaned.startswith("```"):
         cleaned = cleaned.strip("`")
         if cleaned.lower().startswith("json"):
             cleaned = cleaned[4:].lstrip()
+    return cleaned
+
+
+def _parse_array(text: str, lines: Sequence[str]) -> list[ParsedLine]:
+    cleaned = _strip_code_fence(text)
     try:
         loaded = json.loads(cleaned)
     except (json.JSONDecodeError, ValueError):

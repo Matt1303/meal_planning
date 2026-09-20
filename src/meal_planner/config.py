@@ -218,6 +218,14 @@ class ProfileTargets(BaseModel):
     fiber_daily_min: int | None = None
     protein_daily_min: int | None = None
     protein_daily_max: int | None = None
+    # Unset means unlimited — Matt has no reason to cap either.
+    carbs_daily_min: int | None = None
+    carbs_daily_max: int | None = None
+    fat_daily_min: int | None = None
+    fat_daily_max: int | None = None
+    # Present only while this person is on a regime; None is the normal case
+    # and leaves every dish eligible and the model exactly as it was.
+    diet: DietRules | None = None
     # meal_type -> recipe title to pin on that slot every day for this profile
     # (e.g. {"breakfast": "Matt Breakfast Smoothie"}).
     fixed_meals: dict[str, str] = Field(default_factory=dict)
@@ -249,6 +257,12 @@ class ProfileTargets(BaseModel):
             raise ValueError(
                 f"profile '{self.name}': calories_daily_min must be <= calories_daily_max"
             )
+        for low, high, label in (
+            (self.carbs_daily_min, self.carbs_daily_max, "carbs"),
+            (self.fat_daily_min, self.fat_daily_max, "fat"),
+        ):
+            if low is not None and high is not None and low > high:
+                raise ValueError(f"profile '{self.name}': {label}_daily_min must be <= max")
         if (
             self.protein_daily_min is not None
             and self.protein_daily_max is not None
@@ -341,6 +355,27 @@ class FixedExtra(BaseModel):
         }
 
 
+class DietRules(BaseModel):
+    """A per-person dietary regime that changes which dishes suit them.
+
+    Eligibility filters on carbs only. Fat is deliberately not a recipe filter:
+    of 46 lunch/dinner dishes, 15 clear a 20 g carb cap once starches are
+    swapped but only 7 also clear a 55% fat bar — and an 8-day paired plan
+    needs 8 distinct dishes, so a fat filter makes the plan infeasible. Fat is
+    a daily target instead, met with added oils, avocado and snacks.
+    """
+
+    name: str = "keto"
+    # A dish is eligible when its post-swap carbs per serving fall under this.
+    max_carbs_per_serving: float = Field(default=20.0, gt=0)
+    # Swap high-carb ingredients for low-carb stand-ins before judging, and
+    # before costing the person's macros (rice -> cauliflower rice).
+    swaps_enabled: bool = True
+    # Let this person take a different dish when no shared one suits. Their
+    # solo dish is still cooked once and eaten twice, like any other.
+    allow_solo_meals: bool = True
+
+
 class WheyProduct(BaseModel):
     """Per-scoop macros from a protein powder's label."""
 
@@ -411,6 +446,8 @@ class Settings(BaseSettings):
     daily_dozen_targets: dict[str, int] = Field(default_factory=dict)
     # keyword -> supermarket section, for the confirmed-plan shopping list.
     shopping_sections_path: Path = Path("config/supermarket_sections.csv")
+    # Low-carb stand-ins used by profiles on a regime; see meal_planner.diet.
+    diet_swaps_path: Path = Path("config/diet_swaps.csv")
 
     def whey_for(self, profile_name: str) -> WheyProduct:
         """The powder this person drinks, falling back to the household default.
