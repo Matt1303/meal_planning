@@ -162,6 +162,25 @@ def _f(value: Decimal | float | None) -> float:
     return float(value)
 
 
+def _apply_diet(meal: MealEntry, delta: tuple[float, float, float, float, float]) -> MealEntry:
+    """Show a dieter their own version of the dish.
+
+    Their swaps are priced into the solver's totals and the stored day figures,
+    so the plan on screen has to carry them too — otherwise a curry whose rice
+    became cauliflower rice still reads at the rice's carbs, and the meals do
+    not add up to the day.
+    """
+    kcal, fiber, protein, fat, carbs = delta
+    return dataclasses.replace(
+        meal,
+        kcal=max(meal.kcal + kcal, 0.0),
+        fiber_g=max(meal.fiber_g + fiber, 0.0),
+        protein_g=max(meal.protein_g + protein, 0.0),
+        fat_g=max(meal.fat_g + fat, 0.0),
+        carbs_g=max(meal.carbs_g + carbs, 0.0),
+    )
+
+
 def _scale_meal(meal: MealEntry, servings: float) -> MealEntry:
     if abs(servings - 1.0) < 0.005:
         return meal
@@ -633,6 +652,27 @@ def load_plan_view(
         return dataclasses.replace(meal, dozen=dozen)
 
     plan_days: list[DayPlan] = []
+    # A dieter's swaps change what each dish is worth to them, so the view has
+    # to price their meals the same way the solver and the stored totals did.
+    diet_deltas: dict[tuple[int, str], tuple[float, float, float, float, float]] = {}
+    if settings is not None and any(p.diet is not None for p in settings.household.profiles):
+        from meal_planner.diet import compute_diet_adjustments, load_swaps
+        from meal_planner.optimize.data import load_inputs
+
+        inputs = load_inputs(
+            eng,
+            include_non_plant=settings.optimizer.include_non_plant,
+            allow_non_plant_titles=settings.optimizer.allow_non_plant_titles,
+        )
+        diet_deltas = dict(
+            compute_diet_adjustments(
+                inputs.swap_lines,
+                inputs.nutrition,
+                settings,
+                load_swaps(settings.diet_swaps_path),
+            ).deltas
+        )
+
     for day_int in days_int:
         per_profile: list[DayPlanForProfile] = []
         shared = shared_meals_by_day.get(day_int, [])
@@ -643,12 +683,20 @@ def load_plan_view(
             # household dish. Their own entry arrives under the same meal type,
             # so the shared one has to give way or they get served both.
             own_meal_types = {m.meal_type for m in user_meals}
+
+            def _for_profile(meal: MealEntry, servings: float, who: str = name) -> MealEntry:
+                # Swap first, then scale: a delta is stated per whole serving.
+                delta = diet_deltas.get((meal.recipe_id, who)) if meal.recipe_id else None
+                adjusted = meal if delta is None else _apply_diet(meal, delta)
+                return _scale_meal(adjusted, servings)
+
             shared_for_profile = [
-                _scale_meal(m, servings_by_slot.get((day_int, profile_id, m.meal_type), 1.0))
+                _for_profile(m, servings_by_slot.get((day_int, profile_id, m.meal_type), 1.0))
                 for m in shared
                 if m.meal_type not in own_meal_types
             ]
-            combined = [_enrich(m, name) for m in (shared_for_profile + user_meals)]
+            own_for_profile = [_for_profile(m, 1.0) for m in user_meals]
+            combined = [_enrich(m, name) for m in (shared_for_profile + own_for_profile)]
 
             targets_for_profile = targets_by_name.get(name)
             if targets_for_profile is not None:
