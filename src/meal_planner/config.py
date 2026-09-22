@@ -379,6 +379,12 @@ class DietRules(BaseModel):
     # Let this person take a different dish when no shared one suits. Their
     # solo dish is still cooked once and eaten twice, like any other.
     allow_solo_meals: bool = True
+    # Objective penalty per meal taken alone. Without one the solver sent her
+    # solo in all 16 lunch and dinner slots, even where the household dish
+    # suited her — the diversity term rewards giving her different foods, and
+    # nothing rewarded sharing. A solo meal is a second pot on the hob, so it
+    # should happen only when no shared dish works.
+    solo_meal_penalty: float = Field(default=5.0, ge=0)
 
 
 class WheyProduct(BaseModel):

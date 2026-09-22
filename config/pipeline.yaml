@@ -192,6 +192,10 @@ household:
       # room for the fibre a plant-based day carries. Fat has a floor rather
       # than a ceiling: it is what replaces the carb calories.
       carbs_daily_max: 20
+      # Capped: with only a floor, the solver filled her 1,650 kcal with up to
+      # 187 g of protein (45% of calories) and fat fell to 67 g, under its
+      # floor. On keto that much protein also works against ketosis.
+      protein_daily_max: 100
       fat_daily_min: 90
       diet:
         name: keto
@@ -204,6 +208,7 @@ household:
         max_carbs_per_serving: 10
         swaps_enabled: true
         allow_solo_meals: true
+        solo_meal_penalty: 5.0
       # Clear whey rather than the household default — she prefers it, and it
       # is leaner per scoop (85 vs 95 kcal), so the solver has to cost her
       # scoops at these numbers or her calorie total drifts.

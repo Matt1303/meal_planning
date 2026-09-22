@@ -1048,6 +1048,16 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
         whey_term: Any = 0
         if whey_enabled:
             whey_term = sum(m.whey[p, d] for p in m.P for d in m.D)
+        solo_term: Any = 0
+        if hasattr(m, "solo"):
+            penalties = {
+                prof.name: (prof.diet.solo_meal_penalty if prof.diet else 0.0)
+                for prof in settings.household.profiles
+            }
+            solo_term = sum(
+                penalties.get(p_name, 0.0) * m.solo[p_name, d, meal]
+                for p_name, d, meal in m.SOLO_SLOTS
+            )
         time_slack: Any = 0
         if hasattr(m, "slack_weekly_time"):
             time_slack += m.slack_weekly_time
@@ -1062,6 +1072,7 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
             - opt.spacing_weight * spacing_term
             - settings.topup.whey_solver_penalty * whey_term
             - settings.optimizer.time_budget.slack_weight * time_slack
+            - solo_term
         )
 
     model.objective = Objective(rule=objective_rule, sense=maximize)
