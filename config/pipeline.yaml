@@ -172,18 +172,21 @@ household:
       # she inherits portions sized for a 3300 kcal day.
       shared_portion_min: 0.75
       shared_portion_max: 0.75
-      # Iced coffee on Mon/Wed/Thu/Sat. Totals of Califia barista oat milk
-      # 300 ml (162 kcal), Monin caramel syrup 15 ml (49) and Fortnum's
-      # Sandringham blend 9 tsp (36). Fibre isn't on any of the labels.
-      fixed_extras:
-        - name: "Iced coffee (oat milk, caramel syrup)"
-          weekdays: [mon, wed, thu, sat]
-          kcal: 247
-          protein_g: 2.4
-          fat_g: 9.6
-          carbs_g: 36.7
-          fiber_g: 0
-          note: "300 ml oat milk + 15 ml caramel syrup + 9 tsp coffee"
+      # Iced coffee suspended for the keto block: 36.7 g of carbs, more
+      # than the whole 20 g day. Caffeine from a tablet instead. Restore
+      # the block below when the 12 weeks are up.
+      # # Iced coffee on Mon/Wed/Thu/Sat. Totals of Califia barista oat milk
+      # # 300 ml (162 kcal), Monin caramel syrup 15 ml (49) and Fortnum's
+      # # Sandringham blend 9 tsp (36). Fibre isn't on any of the labels.
+      # fixed_extras:
+      # - name: "Iced coffee (oat milk, caramel syrup)"
+      # weekdays: [mon, wed, thu, sat]
+      # kcal: 247
+      # protein_g: 2.4
+      # fat_g: 9.6
+      # carbs_g: 36.7
+      # fiber_g: 0
+      # note: "300 ml oat milk + 15 ml caramel syrup + 9 tsp coffee"
       # --- 12-week keto block ---
       # Net-carb style cap: the plan counts total carbs, so 50 g total leaves
       # room for the fibre a plant-based day carries. Fat has a floor rather

@@ -35,12 +35,13 @@ def test_unknown_weekday_is_rejected() -> None:
 
 
 @pytest.mark.unit
-def test_ellie_s_coffee_lands_on_the_days_she_drinks_it() -> None:
-    settings = Settings.load(Path("config/pipeline.yaml"))
-    ellie = next(p for p in settings.household.profiles if p.name == "ellie")
-    coffee = next(e for e in ellie.fixed_extras if "coffee" in e.name.lower())
+def test_a_four_day_habit_lands_on_the_right_days() -> None:
+    # Asserts the mechanism, not whoever currently has a habit configured: the
+    # shipped config's coffee comes and goes with Ellie's keto block, and a
+    # test that tracked it failed the moment the coffee was suspended.
+    coffee = FixedExtra(name="Iced coffee", weekdays=["mon", "wed", "thu", "sat"], kcal=247.0)
     assert sorted(coffee.days_within(8)) == [1, 3, 4, 6, 8]  # Mon, Wed, Thu, Sat, Mon
-    assert coffee.kcal == pytest.approx(247.0)
+    assert sorted(coffee.days_within(7)) == [1, 3, 4, 6]
 
 
 @pytest.mark.unit
