@@ -130,3 +130,28 @@ def test_swaps_round_trip_through_the_csv(tmp_path: Path) -> None:
 @pytest.mark.unit
 def test_a_missing_swaps_file_is_not_an_error(tmp_path: Path) -> None:
     assert load_swaps(tmp_path / "nope.csv") == {}
+
+
+@pytest.mark.unit
+def test_oil_top_up_is_only_built_for_a_profile_with_a_fat_floor() -> None:
+    # Matt sets no fat floor, so he must gain no variables from this at all.
+    from meal_planner.config import Settings as S
+
+    base = S.load(Path("config/pipeline.yaml"))
+    fat_floors = {p.name: p.fat_daily_min for p in base.household.profiles}
+    assert fat_floors["matt"] is None
+    assert fat_floors["ellie"] is not None
+
+
+@pytest.mark.unit
+def test_oil_meal_reports_what_it_adds() -> None:
+    from meal_planner.config import TopUpSettings
+    from meal_planner.ui.data import _oil_meal
+
+    meal = _oil_meal(TopUpSettings(), 27.0)
+    # Pure fat: no carbs, no protein, and the calories follow the grams.
+    assert meal.fat_g == pytest.approx(27.0)
+    assert meal.carbs_g == 0.0
+    assert meal.protein_g == 0.0
+    assert meal.kcal == pytest.approx(27.0 * TopUpSettings().oil_kcal_per_g)
+    assert meal.is_topup

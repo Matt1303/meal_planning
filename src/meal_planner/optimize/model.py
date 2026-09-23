@@ -270,6 +270,19 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
             model.whey_floor = Constraint(model.P, model.D, rule=whey_floor_rule)
             model.whey_ceiling = Constraint(model.P, model.D, rule=whey_ceiling_rule)
 
+    # Olive oil the solver may add to reach a fat floor. Only built for
+    # profiles that set one, so nobody else gains a single variable.
+    oil_profiles = [p.name for p in prepared.profiles if p.fat_daily_min is not None]
+    oil_enabled = settings.topup.enabled and bool(oil_profiles)
+    if oil_enabled:
+        model.OIL_P = Set(initialize=oil_profiles)
+        model.oil = Var(
+            model.OIL_P,
+            model.D,
+            domain=NonNegativeReals,
+            bounds=(0, settings.topup.max_oil_grams),
+        )
+
     model.slack_group = Var(model.P, model.D, model.G, domain=NonNegativeReals)
     model.slack_weekly_group = Var(model.P, model.G, domain=NonNegativeReals)
 
@@ -735,6 +748,16 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
     def _extra(p: str, d: int, macro: str) -> float:
         return extras.get((p, d), {}).get(macro, 0.0)
 
+    def _oil_kcal(m: Any, p: str, d: int) -> Any:
+        if not oil_enabled or p not in oil_profiles:
+            return 0
+        return m.oil[p, d] * settings.topup.oil_kcal_per_g
+
+    def _oil_fat(m: Any, p: str, d: int) -> Any:
+        if not oil_enabled or p not in oil_profiles:
+            return 0
+        return m.oil[p, d] * settings.topup.oil_fat_g_per_g
+
     def _whey_kcal(m: Any, p: str, d: int) -> Any:
         # Per person: the household may drink different products, and a scoop of
         # one can be worth 10 kcal more than a scoop of another.
@@ -777,6 +800,7 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
                     for r in m.R
                 )
                 + _whey_kcal(m, p, d)
+                + _oil_kcal(m, p, d)
                 + _extra(p, d, "kcal")
                 - m.slack_cal_max[p, d]
                 <= profile.calories_daily_max
@@ -892,6 +916,7 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
                     ) + _extra(p, d, f"{_macro_name}_g")
                     if _macro_name == "fat":
                         eaten += m.whey[p, d] * settings.whey_for(p).fat_g if whey_enabled else 0
+                        eaten += _oil_fat(m, p, d)
                     else:
                         eaten += m.whey[p, d] * settings.whey_for(p).carbs_g if whey_enabled else 0
                     slack = getattr(m, f"slack_{_macro_name}_{_bound}")[p, d]
@@ -1048,6 +1073,9 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
         whey_term: Any = 0
         if whey_enabled:
             whey_term = sum(m.whey[p, d] for p in m.P for d in m.D)
+        oil_term: Any = 0
+        if oil_enabled:
+            oil_term = sum(m.oil[p, d] for p in m.OIL_P for d in m.D)
         solo_term: Any = 0
         if hasattr(m, "solo"):
             penalties = {
@@ -1071,6 +1099,7 @@ def build_model(prepared: PreparedData, settings: Settings, options: ModelOption
             - opt.group_slack_weight * group_slack
             - opt.spacing_weight * spacing_term
             - settings.topup.whey_solver_penalty * whey_term
+            - settings.topup.oil_solver_penalty * oil_term
             - settings.optimizer.time_budget.slack_weight * time_slack
             - solo_term
         )

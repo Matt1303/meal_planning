@@ -422,6 +422,16 @@ class TopUpSettings(BaseModel):
     # Small objective penalty per whey scoop so the solver prefers real food but
     # still allocates whey to hit the protein floor within the calorie band.
     whey_solver_penalty: float = 1.0
+    # Extra virgin olive oil the solver may add to a day to reach a fat floor —
+    # the flex a keto day needs, since the catalogue's dishes are lean. Only
+    # allocated to profiles that set fat_daily_min, so a household without one
+    # gets no extra variables at all.
+    oil_label: str = "Extra virgin olive oil (over meals)"
+    oil_kcal_per_g: float = Field(default=8.84, ge=0)
+    oil_fat_g_per_g: float = Field(default=1.0, ge=0)
+    max_oil_grams: float = Field(default=45.0, ge=0)
+    # Small, so oil fills a genuine shortfall rather than padding calories.
+    oil_solver_penalty: float = Field(default=0.1, ge=0)
     fruits: list[TopUpFruit] = Field(default_factory=list)
 
     @property

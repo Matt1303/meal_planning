@@ -209,6 +209,11 @@ def write_plan(settings: Settings, result: OptimizeResult, *, engine: Engine | N
                                 )
                             ):
                                 totals[i] += Decimal(str(value))
+                grams = result.oil.get((profile_name, day), 0.0)
+                if grams:
+                    topup_cfg = settings.topup
+                    totals[0] += Decimal(str(grams * topup_cfg.oil_kcal_per_g))
+                    totals[3] += Decimal(str(grams * topup_cfg.oil_fat_g_per_g))
                 insert_plan_day_profile(
                     conn,
                     plan_run_id=plan_run_id,
@@ -220,6 +225,7 @@ def write_plan(settings: Settings, result: OptimizeResult, *, engine: Engine | N
                     fat_g=totals[3],
                     carbs_g=totals[4],
                     whey_scoops=scoops,
+                    oil_grams=grams,
                 )
                 for i in range(5):
                     day_household[i] += totals[i]

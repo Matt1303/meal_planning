@@ -127,14 +127,15 @@ def insert_plan_day_profile(
     fat_g: Decimal | float,
     carbs_g: Decimal | float,
     whey_scoops: Decimal | float = 0,
+    oil_grams: Decimal | float = 0,
 ) -> None:
     conn.execute(
         text(
             """
             INSERT INTO meal_planning.plan_day_profile
                 (plan_run_id, day, profile_id, kcal, fiber_g, protein_g, fat_g, carbs_g,
-                 whey_scoops)
-            VALUES (:pr, :d, :pid, :k, :f, :p, :ft, :c, :w)
+                 whey_scoops, oil_grams)
+            VALUES (:pr, :d, :pid, :k, :f, :p, :ft, :c, :w, :oil)
             """
         ),
         {
@@ -147,6 +148,7 @@ def insert_plan_day_profile(
             "ft": Decimal(str(fat_g)),
             "c": Decimal(str(carbs_g)),
             "w": Decimal(str(whey_scoops)),
+            "oil": Decimal(str(oil_grams)),
         },
     )
 

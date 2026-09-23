@@ -290,6 +290,7 @@ class PlanDayProfile(Base):
     fat_g: Mapped[Decimal | None] = mapped_column(Numeric)
     carbs_g: Mapped[Decimal | None] = mapped_column(Numeric)
     whey_scoops: Mapped[Decimal] = mapped_column(Numeric, nullable=False, default=0)
+    oil_grams: Mapped[Decimal] = mapped_column(Numeric, nullable=False, default=0)
 
 
 class PlanMealPortion(Base):

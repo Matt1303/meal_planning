@@ -415,6 +415,30 @@ def _extra_meal(extra: FixedExtra) -> MealEntry:
     )
 
 
+def _oil_meal(topup: TopUpSettings, grams: float) -> MealEntry:
+    """Olive oil the optimiser added to reach a fat floor.
+
+    Shown as its own line so the meals still add up to the day, the same way
+    the whey shake is — it is real intake, not an accounting adjustment.
+    """
+    spoons = grams / 13.5  # a tablespoon of oil
+    return MealEntry(
+        meal_type="topup",
+        title=f"{topup.oil_label} — {grams:.0f} g",
+        recipe_id=None,
+        kcal=grams * topup.oil_kcal_per_g,
+        fiber_g=0.0,
+        protein_g=0.0,
+        fat_g=grams * topup.oil_fat_g_per_g,
+        carbs_g=0.0,
+        is_topup=True,
+        detail=(
+            f"about {spoons:.1f} tbsp over the day's meals "
+            f"(+{grams * topup.oil_fat_g_per_g:.0f} g fat) — allocated by the optimiser"
+        ),
+    )
+
+
 def _whey_meal(whey: WheyProduct, scoops: float) -> MealEntry:
     shown = f"{scoops:.0f}" if abs(scoops - round(scoops)) < 0.05 else f"{scoops:.1f}"
     grams = scoops * whey.scoop_grams
@@ -544,7 +568,7 @@ def load_plan_view(
                        pdp.kcal, pdp.fiber_g, pdp.protein_g, pdp.fat_g, pdp.carbs_g,
                        up.calories_daily_min, up.calories_daily_max,
                        up.fiber_daily_min, up.protein_daily_min, up.protein_daily_max,
-                       pdp.whey_scoops
+                       pdp.whey_scoops, pdp.oil_grams
                 FROM meal_planning.plan_day_profile pdp
                 JOIN meal_planning.user_profile up ON up.profile_id = pdp.profile_id
                 WHERE pdp.plan_run_id = :pr
@@ -615,11 +639,13 @@ def load_plan_view(
     # plan's shortfall + top-ups match its own targets, not the current config.
     stored_targets: dict[int, ProfileTargets] = {}
     whey_by_day_profile: dict[tuple[int, int], float] = {}
+    oil_by_day_profile: dict[tuple[int, int], float] = {}
     for row in day_profile_rows:
         pid = int(row[1])
         profile_id_to_name[pid] = str(row[2])
         profile_id_to_display[pid] = str(row[3])
         whey_by_day_profile[(int(row[0]), pid)] = float(row[14] or 0)
+        oil_by_day_profile[(int(row[0]), pid)] = float(row[15] or 0)
         if pid not in stored_targets and any(v is not None for v in row[9:14]):
             stored_targets[pid] = ProfileTargets(
                 name=str(row[2]),
@@ -709,6 +735,10 @@ def load_plan_view(
 
             # Whey the optimiser allocated for this person/day (protein within
             # the calorie band) — show it as a meal so totals reconcile.
+            oil_grams = oil_by_day_profile.get((day_int, profile_id), 0.0)
+            if oil_grams > 0.5 and topup_cfg.enabled:
+                combined.append(_oil_meal(topup_cfg, oil_grams))
+
             scoops = whey_by_day_profile.get((day_int, profile_id), 0.0)
             if scoops > 0.05 and topup_cfg.enabled:
                 whey = settings.whey_for(name) if settings is not None else topup_cfg.default_whey

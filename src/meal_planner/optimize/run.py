@@ -118,6 +118,8 @@ class OptimizeResult:
     # (profile_name, day, shared meal_type) -> servings of that dish the person
     # eats. Absent means the full serving (1.0).
     portions: dict[tuple[str, int, str], float] = field(default_factory=dict)
+    # (profile_name, day) -> grams of olive oil the solver added for fat.
+    oil: dict[tuple[str, int], float] = field(default_factory=dict)
 
 
 SHARED_KEY = "__shared__"
@@ -200,6 +202,7 @@ def optimize_plan(settings: Settings, *, engine: Engine | None = None) -> Optimi
         take = loaded and _plan_complete(plan, prepared)
         if take:
             whey = _extract_whey(model, prepared)
+            oil = _extract_oil(model, prepared)
             portions = _extract_portions(model, prepared, plan)
             slack = total_slack(model, prepared)
             with eng.begin() as conn:
@@ -237,6 +240,7 @@ def optimize_plan(settings: Settings, *, engine: Engine | None = None) -> Optimi
                 relaxation_level=int(level),
                 prepared=prepared,
                 whey=whey,
+                oil=oil,
                 portions=portions,
             )
         last_error = str(condition)
@@ -384,6 +388,21 @@ def _extract_whey(model: Any, prepared: PreparedData) -> dict[tuple[str, int], f
             # Fractional scoops are fine — only include what's needed.
             if value is not None and float(value) > 0.05:
                 out[(p.name, d)] = round(float(value), 2)
+    return out
+
+
+def _extract_oil(model: Any, prepared: PreparedData) -> dict[tuple[str, int], float]:
+    """Grams of olive oil allocated per person-day, ignoring a trace."""
+    out: dict[tuple[str, int], float] = {}
+    if not hasattr(model, "oil"):
+        return out
+    for p in prepared.profiles:
+        for d in prepared.days:
+            if (p.name, d) not in model.oil:
+                continue
+            value = cast(Any, model.oil[p.name, d]).value
+            if value is not None and float(value) > 0.5:
+                out[(p.name, d)] = round(float(value), 1)
     return out
 
 
