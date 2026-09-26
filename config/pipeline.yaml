@@ -177,16 +177,18 @@ household:
       # 17 g carb cost into a 24 g fat contribution. Cream is measured at 50 ml,
       # not the 300 ml of milk it replaces — 300 ml of cream would be 1,347 kcal.
       # Coffee counted at the brewed drink (~0 carbs) rather than the 9 tsp of
-      # dry grounds (7.2 g), which is what the original figure measured.
+      # dry grounds (7.2 g), which is what the original figure measured. The
+      # caramel is the sugar-free version: the sugared one was 12.1 g of carbs,
+      # most of a 20 g day on its own.
       fixed_extras:
-        - name: "Iced coffee (double cream, caramel syrup)"
+        - name: "Iced coffee (double cream, sugar-free caramel)"
           weekdays: [mon, wed, sat]
-          kcal: 276
+          kcal: 227
           protein_g: 0.9
           fat_g: 24.9
-          carbs_g: 13.5
+          carbs_g: 1.4
           fiber_g: 0
-          note: "50 ml double cream + 15 ml caramel syrup + brewed coffee"
+          note: "50 ml double cream + 15 ml sugar-free caramel + brewed coffee"
       # --- 12-week keto block ---
       # Net-carb style cap: the plan counts total carbs, so 50 g total leaves
       # room for the fibre a plant-based day carries. Fat has a floor rather
