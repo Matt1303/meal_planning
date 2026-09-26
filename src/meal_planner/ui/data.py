@@ -465,13 +465,22 @@ def _fruit_topups(
     dozen_targets: dict[str, int],
     day_kcal: float,
     calorie_max: float | None,
+    day_carbs: float = 0.0,
+    carbs_max: float | None = None,
 ) -> list[MealEntry]:
     """Distinct fruit to fill short fruit Daily Dozen categories, but only while
-    it keeps the day within the calorie ceiling (calories take priority)."""
+    it keeps the day inside its ceilings.
+
+    Carbs matter as much as calories here: fruit is mostly sugar, and suggesting
+    an orange and a handful of berries to someone on a 20 g keto day added 25 g
+    of carbs on its own — more than the whole budget — to hit a Daily Dozen
+    target that the regime has already made unreachable.
+    """
     entries: list[MealEntry] = []
     if not topup.enabled:
         return entries
     running_kcal = day_kcal
+    running_carbs = day_carbs
     fruits_by_group: dict[str, list[TopUpFruit]] = defaultdict(list)
     for fruit in topup.fruits:
         fruits_by_group[fruit.food_group].append(fruit)
@@ -488,8 +497,11 @@ def _fruit_topups(
                 continue
             if calorie_max is not None and running_kcal + fruit.kcal > calorie_max:
                 continue  # would breach the calorie ceiling — skip
+            if carbs_max is not None and running_carbs + fruit.carbs_g > carbs_max:
+                continue  # would breach the carb ceiling — skip
             present.add(fruit.name.strip().lower())
             running_kcal += fruit.kcal
+            running_carbs += fruit.carbs_g
             gap -= 1
             entries.append(
                 MealEntry(
@@ -759,12 +771,20 @@ def load_plan_view(
                 if targets.calories_daily_max is not None
                 else None
             )
+            carbs_max = (
+                float(targets_for_profile.carbs_daily_max)
+                if targets_for_profile is not None
+                and targets_for_profile.carbs_daily_max is not None
+                else None
+            )
             topups = _fruit_topups(
                 topup_cfg,
                 {g: set(foods) for g, foods in day_dozen.items()},
                 targets_map,
                 current_kcal,
                 calorie_max,
+                sum(m.carbs_g for m in combined),
+                carbs_max,
             )
             combined += topups
             for m in topups:
