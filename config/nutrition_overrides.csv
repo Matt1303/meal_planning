@@ -20,3 +20,7 @@ whole wheat pasta,348,13.4,10.7,2.5,66.0,"Dry wholewheat pasta — LLM kept reje
 bread,265,9.0,2.7,3.2,49.0,"Generic bread/crusty loaf — same reject loop, was contributing 0 kcal"
 granulated sweetener,0,0,0,0,0,Erythritol/stevia blend — no usable calories
 cocoa powder,350,20.0,33.0,22.0,58.0,Unsweetened cocoa: most of the carbohydrate is fibre
+chicken breast,165,31.0,0,3.6,0,"Skinless breast, raw"
+chicken thigh,177,24.0,0,9.0,0,"Skinless boneless thigh, raw"
+sausages,300,13.0,0,25.0,10.0,Pork sausage
+salmon fillet,208,20.0,0,13.0,0,"Atlantic salmon, raw"
